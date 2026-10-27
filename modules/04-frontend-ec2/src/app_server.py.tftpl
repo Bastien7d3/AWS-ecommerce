@@ -79,7 +79,7 @@ HTML_PAGE = """<!DOCTYPE html>
     .prod-title { font-weight: 700; font-size: 1.05rem; margin-bottom: 0.4rem; }
     .prod-meta { font-size: 0.86rem; color: var(--muted); margin-bottom: 0.8rem; }
     .price { font-size: 1.25rem; font-weight: 800; color: var(--navy); }
-    input[type="email"], input[type="text"] { padding: 0.55rem 0.8rem; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 0.92rem; width: 270px; }
+    input[type="email"], input[type="text"], input[type="password"] { padding: 0.55rem 0.8rem; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 0.92rem; width: 270px; }
     button { background: var(--orange); color: #111; border: none; font-weight: 700; padding: 0.6rem 1.1rem; border-radius: 6px; cursor: pointer; font-size: 0.92rem; }
     button:hover { background: #e68a00; }
     button:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -95,6 +95,7 @@ HTML_PAGE = """<!DOCTYPE html>
     a.pdf-link:hover { text-decoration: underline; }
     #toast { display: none; padding: 0.9rem 1.2rem; border-radius: 8px; margin-bottom: 1.2rem; background: #dcfce7; border: 1px solid #16a34a; color: #14532d; font-weight: 600; }
   </style>
+  <script src="https://cdn.jsdelivr.net/npm/amazon-cognito-identity-js@6.3.6/dist/amazon-cognito-identity.min.js"></script>
 </head>
 <body>
   <header>
@@ -108,7 +109,7 @@ HTML_PAGE = """<!DOCTYPE html>
   <div class="container">
     <div id="toast"></div>
 
-<!-- 1. IDENTIFICATION CLIENT & AUTHENTIFICATION COGNITO -->
+    <!-- 1. IDENTIFICATION CLIENT & AUTHENTIFICATION COGNITO -->
     <div class="card">
       <h2><span>1. Connexion Client & Authentification (Amazon Cognito)</span></h2>
       <p style="font-size: 0.88rem; color: var(--muted); margin-bottom: 0.8rem;">
@@ -116,7 +117,7 @@ HTML_PAGE = """<!DOCTYPE html>
       </p>
       <div style="display:flex; gap:0.7rem; align-items:center; flex-wrap:wrap; margin-bottom: 0.8rem;">
         <input type="email" id="cognito-email" placeholder="votre.email@domaine.fr">
-        <input type="password" id="cognito-password" placeholder="Mot de passe" style="padding:0.55rem 0.8rem; border:1px solid #cbd5e1; border-radius:6px; font-size:0.92rem; width:200px;">
+        <input type="password" id="cognito-password" placeholder="Mot de passe" style="width:200px;">
         <button class="btn-secondary" onclick="registerCognito()">S'inscrire (Cognito)</button>
         <button class="btn-secondary" onclick="loginCognito()">Se connecter</button>
       </div>
@@ -185,6 +186,59 @@ HTML_PAGE = """<!DOCTYPE html>
   </div>
 
   <script>
+    // Configuration & Instanciation Cognito globale
+    window.APP_CONFIG = {
+      userPoolId: '""" + USER_POOL_ID + """',
+      userPoolClientId: '""" + USER_POOL_CLIENT_ID + """',
+      region: '""" + REGION + """'
+    };
+
+    var userPool = null;
+    if (typeof AmazonCognitoIdentity !== 'undefined') {
+      const poolData = {
+        UserPoolId: window.APP_CONFIG.userPoolId,
+        ClientId: window.APP_CONFIG.userPoolClientId
+      };
+      userPool = new AmazonCognitoIdentity.CognitoUserPool(poolData);
+    }
+
+    function registerCognito() {
+      if (!userPool) { alert('Erreur: SDK Cognito non disponible.'); return; }
+      const email = document.getElementById('cognito-email').value.trim();
+      const password = document.getElementById('cognito-password').value;
+      if (!email || !password) { alert('Veuillez saisir un e-mail et un mot de passe.'); return; }
+
+      const attributeList = [
+        new AmazonCognitoIdentity.CognitoUserAttribute({ Name: 'email', Value: email })
+      ];
+
+      userPool.signUp(email, password, attributeList, null, (err, result) => {
+        if (err) { alert('Erreur Cognito : ' + err.message); return; }
+        showToast('✅ Compte Cognito créé ! Un code de vérification a été envoyé sur ' + email);
+      });
+    }
+
+    function loginCognito() {
+      if (!userPool) { alert('Erreur: SDK Cognito non disponible.'); return; }
+      const email = document.getElementById('cognito-email').value.trim();
+      const password = document.getElementById('cognito-password').value;
+      if (!email || !password) { alert('Veuillez saisir votre e-mail et mot de passe.'); return; }
+
+      const authDetails = new AmazonCognitoIdentity.AuthenticationDetails({ Username: email, Password: password });
+      const cognitoUser = new AmazonCognitoIdentity.CognitoUser({ Username: email, Pool: userPool });
+
+      cognitoUser.authenticateUser(authDetails, {
+        onSuccess: (result) => {
+          const jwtToken = result.getIdToken().getJwtToken();
+          sessionStorage.setItem('jwt_token', jwtToken);
+          document.getElementById('customer-email').value = email;
+          document.getElementById('cognito-status').innerHTML = 'Statut : <strong style="color:var(--green)">Connecté avec ' + email + ' (Token JWT actif)</strong>';
+          showToast('✅ Session Cognito active !');
+        },
+        onFailure: (err) => { alert('Erreur de connexion : ' + err.message); }
+      });
+    }
+
     function showToast(msg) {
       const toast = document.getElementById('toast');
       toast.style.display = 'block';
@@ -313,55 +367,7 @@ HTML_PAGE = """<!DOCTYPE html>
 
     loadAll();
     setInterval(() => { loadOrders(); loadSpotStatus(); }, 5000);
-    function registerCognito() {
-          const email = document.getElementById('cognito-email').value.trim();
-          const password = document.getElementById('cognito-password').value;
-          if (!email || !password) { alert('Veuillez saisir un e-mail et un mot de passe.'); return; }
-
-          const attributeList = [
-            new AmazonCognitoIdentity.CognitoUserAttribute({ Name: 'email', Value: email })
-          ];
-
-          userPool.signUp(email, password, attributeList, null, (err, result) => {
-            if (err) { alert('Erreur Cognito : ' + err.message); return; }
-            showToast('✅ Compte Cognito créé ! Un code de vérification a été envoyé sur ' + email);
-          });
-        }
-
-        function loginCognito() {
-          const email = document.getElementById('cognito-email').value.trim();
-          const password = document.getElementById('cognito-password').value;
-          if (!email || !password) { alert('Veuillez saisir votre e-mail et mot de passe.'); return; }
-
-          const authDetails = new AmazonCognitoIdentity.AuthenticationDetails({ Username: email, Password: password });
-          const cognitoUser = new AmazonCognitoIdentity.CognitoUser({ Username: email, Pool: userPool });
-
-          cognitoUser.authenticateUser(authDetails, {
-            onSuccess: (result) => {
-              const jwtToken = result.getIdToken().getJwtToken();
-              sessionStorage.setItem('jwt_token', jwtToken);
-              document.getElementById('customer-email').value = email;
-              document.getElementById('cognito-status').innerHTML = 'Statut : <strong style="color:var(--green)">Connecté avec ' + email + ' (Token JWT actif)</strong>';
-              showToast('✅ Session Cognito active !');
-            },
-            onFailure: (err) => { alert('Erreur de connexion : ' + err.message); }
-          });
-        }
   </script>
-  <!-- À INSÉRER JUSTE APRÈS LA BALISE <script> DU HTML_PAGE -->
-    <script src="https://cdn.jsdelivr.net/npm/amazon-cognito-identity-js@6.3.6/dist/amazon-cognito-identity.min.js"></script>
-    <script>
-      window.APP_CONFIG = {
-        userPoolId: '""" + USER_POOL_ID + """',
-        userPoolClientId: '""" + USER_POOL_CLIENT_ID + """',
-        region: '""" + REGION + """'
-      };
-
-      const poolData = {
-        UserPoolId: window.APP_CONFIG.userPoolId,
-        ClientId: window.APP_CONFIG.userPoolClientId
-      };
-      const userPool = new AmazonCognitoIdentity.CognitoUserPool(poolData);
 </body>
 </html>
 """
@@ -475,7 +481,6 @@ class ShopHandler(BaseHTTPRequestHandler):
                 ec2 = boto3.client("ec2", region_name=REGION)
                 inst_id = None
                 mode_used = "EC2 Spot"
-                # 1. Essaie d'abord sur le marché Spot (t3.micro puis t3.small sur n'importe quelle AZ disponible)
                 for itype in ("t3.micro", "t3.small"):
                     try:
                         run_resp = ec2.run_instances(
@@ -493,7 +498,6 @@ class ShopHandler(BaseHTTPRequestHandler):
                         break
                     except Exception:
                         continue
-                # 2. Fallback automatique si AWS n'a plus de capacité Spot dans la région à cette seconde (Continuité de service)
                 if not inst_id:
                     run_resp = ec2.run_instances(
                         LaunchTemplate={"LaunchTemplateId": SPOT_LT_ID, "Version": "$Latest"},
