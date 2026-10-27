@@ -120,18 +120,22 @@ Chaque partie de l'architecture possède son propre dossier dans [`modules/`](./
 
 ## 5. Analyse FinOps & Seuil de Rentabilité (Break-Even Point)
 
-### Comparatif des coûts (Région eu-west-3 Paris)
-* **Coût de l'EC2 Spot en batch éphémère (2h / nuit = 60h / mois) :**
-  * Calcul Spot `t3.micro` : 60 h x 0,0031 $/h = **0,186 $/mois**
-  * Disque EBS `gp3` (8 Go) : **0,70 $/mois**
-  * **Total mensuel fixe du worker : environ 0,89 $/mois**
-* **Coût sur AWS Lambda (génération PDF 3s à 512 Mo de RAM) :**
-  * Environ **0,0000202 $ par commande**
+> Pour l'analyse complète module par module et le comparatif avec une architecture Full Serverless, voir **[`ANALYSE_COUTS_REELS_FINOPS.md`](./ANALYSE_COUTS_REELS_FINOPS.md)**.
+
+### Comparatif des coûts du Batch PDF (Région `eu-west-3` Paris)
+* **Coût de notre Worker EC2 Spot éphémère avec auto-destruction (base 2h / nuit = 60h / mois) :**
+  * Calcul Spot `t3.micro` (tarif réel relevé en `eu-west-3c`) : `60 h x 0,0040 $/h` = **0,24 $/mois**
+  * Disque EBS `gp3` (8 Go détruit après chaque batch, soit 60h/730h) : **0,06 $/mois**
+  * **Total mensuel du Worker Spot : 0,30 $/mois**
+* **Coût sur AWS Lambda (génération PDF 3s à 512 Mo de RAM = 1,5 Go-s) :**
+  * **0,000025 $ par commande** (soit **2,50 $ pour 100 000 commandes** hors quota gratuit).
 
 ### Seuil de rentabilité mathématique
-* `Seuil = 0,89 $ / 0,0000202 $` = **environ 44 000 commandes / mois** (~1 450 commandes / jour)
-* **En dessous de 44 000 commandes/mois :** Le Serverless (Lambda) est le plus économique, et les 266 000 premières exécutions sont couvertes à **0,00 €** par l'offre *Always Free* (400 000 Go-secondes).
-* **Au-delà de 44 000 commandes/mois :** L'EC2 Spot éphémère est nettement plus avantageuse (-75 % à 200 000 commandes) et s'affranchit de la limite stricte des **15 minutes d'exécution maximum** imposée par AWS Lambda.
+* **En tarif catalogue brut (hors quota gratuit) :**
+  * `Seuil = 0,30 $ / 0,000025 $` = **12 000 commandes / mois** (~400 commandes / jour).
+* **En comptant l'offre gratuite permanente (*Always Free* : 400 000 Go-s / mois sur Lambda) :**
+  * Les **266 000 premières factures PDF / mois** (`400 000 / 1,5 Go-s`) sont couvertes à **0,00 €** sur Lambda.
+  * **Au-delà de 266 000 commandes/mois** (ou dès qu'un traitement par lot dépasse la limite stricte des **15 minutes** de Lambda) : l'EC2 Spot éphémère (`0,30 $/mois`) est imbattable financièrement et techniquement.
 
 ---
 

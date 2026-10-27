@@ -1,170 +1,141 @@
 # Analyse FinOps & Coûts Réels AWS — Projet CloudShop (FISA 2026)
 
 > **Compte AWS audité :** `689505268069` — **Région :** `eu-west-3` (Paris)
-> **Coût réel facturé à date (AWS Cost Explorer) :** **0,00 $** (100 % couvert par le Free Tier AWS).
+> **Facture réelle actuelle (AWS Cost Explorer) :** **0,00 $** (100 % couvert par le Free Tier AWS).
 
 ---
 
-## 1. Détail Module par Module : Configuration Terraform, Consommation Réelle & Où la consulter sur AWS
+## 1. Coût Réel & Tarif de Chaque Module (du plus simple au plus complet)
 
-### Module 00 : Authentification Client (`modules/00-auth-cognito`)
-* **Ressources Terraform ([`modules/00-auth-cognito/main.tf`](./modules/00-auth-cognito/main.tf)) :**
-  * `aws_cognito_user_pool.pool` (`cloudshop-user-pool`, ID : `eu-west-3_oNvBDPYNy`)
-  * `aws_cognito_user_pool_client.client` (`cloudshop-app-client`)
-  * `aws_cognito_user_pool_domain.main` (`cloudshop-auth-fisa2026`)
-* **Consommation réelle relevée sur AWS :**
-  * **2 utilisateurs inscrits** (MAU = *Monthly Active Users*).
-  * Coût réel : **0,00 $**.
-* **Grille tarifaire AWS (`eu-west-3`) :**
-  * **Always Free (Gratuit à vie) :** Jusqu'à **50 000 utilisateurs actifs / mois (MAU)**.
-  * Au-delà de 50 000 MAU : **0,0055 $ par MAU** (de 50 001 à 100 000 MAU).
+### Module 00 : Authentification (`modules/00-auth-cognito`)
+* **Ce qui est déployé :** User Pool Cognito (`cloudshop-user-pool`).
+* **Notre conso réelle sur AWS :** **2 utilisateurs inscrits** -> **0,00 $**.
+* **Tarif AWS :**
+  * **Gratuit à vie (*Always Free*) :** jusqu'à **50 000 utilisateurs actifs / mois**.
+  * Au-delà : **0,0055 $ par utilisateur actif / mois**.
 
 ---
 
-### Module 01 : Base de Données NoSQL & Stockage Factures (`modules/01-database-dynamodb` + Backend S3)
-* **Ressources Terraform ([`modules/01-database-dynamodb/main.tf`](./modules/01-database-dynamodb/main.tf) & [`main.tf`](./main.tf)) :**
-  * Table DynamoDB `cloudshop-products` : Mode `PROVISIONED` (**5 RCU / 5 WCU**).
-  * Table DynamoDB `cloudshop-orders` : Mode `PROVISIONED` (**5 RCU / 5 WCU**).
-  * Table DynamoDB `cloudshop-tfstate-locks` (verrouillage Terraform) : Mode `PAY_PER_REQUEST` -> usage vraiment peu fréquent mais pertinent de payer à l'usage pour laisser de la place à une éventuelle extension des autres bases de données.
-  * Bucket S3 `cloudshop-invoices-689505268069` (Factures PDF + scripts Python).
-  * Bucket S3 `cloudshop-tfstate-fisa2026-unique` (État partagé `terraform.tfstate`).
-* **Consommation réelle relevée sur AWS :**
-  * **DynamoDB :** 10 RCU et 10 WCU provisionnés au total sur le projet (sur les 25 RCU / 25 WCU gratuits) ; `1 730 unités` consommées dans Cost Explorer -> **0,00 $**.
-  * **Amazon S3 :**
-    * `cloudshop-invoices-689505268069` : **14 objets** pour **68,4 Ko** (`68 444 octets`, ~2,5 Ko par facture PDF).
-    * `cloudshop-tfstate-fisa2026-unique` : **1 objet** pour **123,5 Ko** (`123 457 octets`).
-    * Total requêtes S3 dans Cost Explorer : `1 999 requêtes` -> **0,000002 $ (~0,00 €)**.
-* **Grille tarifaire AWS (`eu-west-3`) :**
-  * **DynamoDB (*Always Free*) :** 25 Go de stockage + 25 WCU + 25 RCU gratuits à vie (permettent jusqu'à **200 millions de requêtes/mois**). Au-delà en mode *On-Demand* : **1,34 $ / million d'écritures** et **0,268 $ / million de lectures**.
-  * **Amazon S3 (*Free Tier 12 mois*) :** 5 Go de stockage Standard + 20 000 `GET` + 2 000 `PUT` gratuits/mois. Au-delà : **0,024 $ / Go / mois** ; **0,0053 $ / 1 000 requêtes `PUT`** ; **0,00042 $ / 1 000 requêtes `GET`**.
+### Module 01 : Base de Données & Stockage (`modules/01-database-dynamodb` + S3)
+* **Ce qui est déployé :**
+  * 2 tables DynamoDB (`products` et `orders`) en mode **Provisionné (`5 RCU / 5 WCU` chacune = 10 RCU / 10 WCU au total)**.
+  * 1 table DynamoDB (`cloudshop-tfstate-locks`) en mode **Pay-Per-Request** (verrouillage Terraform : usage très ponctuel uniquement lors des déploiements).
+  * 2 Buckets S3 : `cloudshop-invoices-689505268069` (factures PDF) et `cloudshop-tfstate-fisa2026-unique` (état Terraform).
+* **Notre conso réelle sur AWS :**
+  * **DynamoDB :** `1 730 opérations` -> **0,00 $**.
+  * **Amazon S3 :** **18 fichiers** dans le bucket factures (`82,7 Ko`, ~2,5 Ko par PDF) + **1 fichier** `tfstate` (`128 Ko`) -> **0,00 $** (`0,000002 $`).
+* **Tarif AWS :**
+  * **DynamoDB (*Always Free*) :** 25 Go + **25 RCU / 25 WCU gratuits à vie** (suffisant pour des millions de lectures/écritures par mois).
+  * **Amazon S3 :** **5 Go gratuits** la 1re année, puis **0,024 $ / Go / mois** (100 000 factures PDF de 2,5 Ko = 250 Mo = **0,006 $ / mois**, soit moins d'un centime).
 
 ---
 
-### Module 02 : Bus Événementiel & File d'Attente (`modules/02-messaging-sns-sqs`)
-* **Ressources Terraform ([`modules/02-messaging-sns-sqs/main.tf`](./modules/02-messaging-sns-sqs/main.tf)) :**
-  * Topic SNS `cloudshop-order-confirmation` (avec abonnement e-mail filtré par `FilterPolicy`).
-  * Topic SNS `cloudshop-shipping-notification`.
-  * File SQS Standard `cloudshop-orders-batch-queue` (rétention : 14 jours = `1 209 600 s`, *visibility timeout* : `120 s`).
-* **Consommation réelle relevée sur AWS :**
-  * **SQS :** **16 messages envoyés**, **12 messages reçus** (`27 appels API` au total dans Cost Explorer) -> **0,00 $**.
-  * **SNS :** **28 publications**, **17 notifications e-mail délivrées** -> **0,00 $**.
-* **Grille tarifaire AWS (`eu-west-3`) :**
-  * **Amazon SQS (*Always Free*) :** **1 000 000 de requêtes / mois gratuites à vie**. Au-delà : **0,40 $ par million de requêtes**.
-  * **Amazon SNS (*Always Free*) :** **1 000 000 de publications** + **1 000 notifications e-mail / mois gratuites à vie**. Au-delà de 1 000 e-mails/mois : **2,00 $ par 100 000 e-mails** (soit `0,00002 $ / e-mail`).
----
-
-### Module 03 : Cœur Transactionnel Serverless (`modules/03-serverless-lambda`)
-* **Ressources Terraform ([`modules/03-serverless-lambda/main.tf`](./modules/03-serverless-lambda/main.tf)) :**
-  * Fonction Lambda `cloudshop-create-order` : Runtime `python3.12`, **RAM = 128 Mo**, Timeout = `15 s`, Taille du code = `1 839 octets`.
-* **Consommation réelle relevée sur AWS (CloudWatch & Cost Explorer) :**
-  * **16 invocations** réalisées lors de nos tests.
-  * **Durée moyenne réelle d'exécution :** **603,4 ms** (Maximum : `845,5 ms`).
-  * **Consommation totale de calcul :** `2,089 Go-secondes` (sur 400 000 Go-s gratuites) -> **0,00 $**.
-* **Grille tarifaire AWS (`eu-west-3`) :**
-  * **AWS Lambda (*Always Free*) :** **1 000 000 de requêtes / mois** + **400 000 Go-secondes / mois** gratuits à vie.
-    * À **128 Mo de RAM** et **603 ms** par commande, 1 commande consomme `0,125 Go x 0,603 s = 0,0754 Go-s`.
-    * L'offre *Always Free* couvre donc gratuitement jusqu'à **5 300 000 exécutions de `create-order` en Go-s** (plafonnée à **1 000 000 de requêtes gratuites/mois**).
-  * Au-delà du Free Tier : **0,20 $ / million de requêtes** + **0,0000166667 $ par Go-seconde**.
+### Module 02 : Messaging Événementiel (`modules/02-messaging-sns-sqs`)
+* **Ce qui est déployé :** 2 Topics SNS (`order-confirmation`, `shipping-notification`) + 1 File SQS (`orders-batch-queue`, rétention 14 jours).
+* **Notre conso réelle sur AWS :**
+  * **SQS :** **16 messages envoyés / 16 reçus** (`27 requêtes API`) -> **0,00 $**.
+  * **SNS :** **32 publications / 20 e-mails envoyés** -> **0,00 $**.
+* **Tarif AWS :**
+  * **SQS (*Always Free*) :** **1 000 000 de requêtes / mois gratuites à vie**, puis **0,40 $ / million**.
+  * **SNS (*Always Free*) :** **1 000 e-mails / mois gratuits à vie**, puis **2,00 $ pour 100 000 e-mails** (`0,00002 $ / e-mail`).
 
 ---
 
-### Module 04 : Serveur Web Front-End EC2 & Élasticité (`modules/04-frontend-ec2`)
-(à compléter)
+### Module 03 : Prise de Commande Serverless (`modules/03-serverless-lambda`)
+* **Ce qui est déployé :** Fonction Lambda `cloudshop-create-order` (`python3.12`, **128 Mo de RAM**, timeout `15 s`).
+* **Notre conso réelle sur AWS :**
+  * **16 exécutions**, durée moyenne réelle mesurée : **603 ms** (`0,6 s`) -> **0,00 $**.
+* **Tarif AWS :**
+  * **Lambda (*Always Free*) :** **1 000 000 de requêtes / mois** + **400 000 Go-secondes / mois** gratuits à vie.
+  * À `128 Mo` et `0,6 s`, notre Lambda est **100 % gratuite jusqu'à 1 000 000 de commandes / mois**.
+  * Au-delà d'un million de commandes : **~1,45 $ par million de commandes**.
+
+---
+
+### Module 04 : Serveur Web Front-End EC2 (`modules/04-frontend-ec2`)
+* **Ce qui est déployé :**
+  * **Mode Standard (`enable_autoscaling_alb = false`) :** 1 instance EC2 `t3.micro` + 1 disque EBS `gp3` de `8 Go`.
+  * **Mode Haute Disponibilité (`enable_autoscaling_alb = true`) :** 1 Load Balancer (ALB) + Auto Scaling Group (`2 à 4 instances EC2 t3.micro`).
+* **Notre conso réelle sur AWS :**
+  * 1 instance `t3.micro` active (`i-0f3c0b44fd4864ad4`) + 1 disque `8 Go gp3` -> **0,00 $** (couvert par les 750h/mois EC2 et 30 Go EBS gratuits la 1re année).
+* **Tarif AWS (hors 1re année gratuite) :**
+  * **Mode 1 EC2 `t3.micro` seule :** `8,61 $/mois` (EC2 à `0,0118 $/h` x 730h) + `0,70 $/mois` (disque 8 Go) = **9,31 $ / mois fixes**.
+  * **Mode Haute Disponibilité (ALB + 2 EC2 `t3.micro`) :** `17,74 $/mois` (ALB) + `2 x 9,31 $` (2 EC2) = **36,36 $ / mois fixes**.
 
 ---
 
 ### Module 05 : Worker Batch EC2 Spot Éphémère (`modules/05-batch-ec2-spot`)
-* **Ressources Terraform ([`modules/05-batch-ec2-spot/main.tf`](./modules/05-batch-ec2-spot/main.tf)) :**
-  * `aws_launch_template.spot_worker_lt` (`t3.micro`, `instance_initiated_shutdown_behavior = "terminate"`, EBS `8 Go gp3` avec `delete_on_termination = true`).
-  * `aws_autoscaling_group.spot_periodic_asg` (`desired_capacity = 0` au repos, réveil planifié à `02h00 UTC` via `aws_autoscaling_schedule` ou lancement manuel à la demande).
-* **Prix Spot réels relevés en direct sur AWS `eu-west-3` (via `ec2:DescribeSpotPriceHistory`) :**
-  * `t3.micro` Spot :
-    * `eu-west-3c` : **0,0040 $ / heure** (contre **0,0118 $/h** en On-Demand, soit **-66,1 % d'économie**)
-    * `eu-west-3a` : **0,0043 $ / heure** (**-63,6 %**)
-    * `eu-west-3b` : **0,0047 $ / heure** (**-60,2 %**)
-  * `t3.small` Spot :
-    * `eu-west-3c` : **0,0078 $ / heure** (contre **0,0236 $/h** en On-Demand, soit **-66,9 % d'économie**)
-* **Coût réel d'un cycle Batch Spot (avec auto-destruction `terminate`) :**
-  * Comme l'instance et son disque EBS 8 Go sont **détruits dès la fin du batch** (`shutdown -h now` -> `terminated`), **on ne paie le disque EBS et le CPU que pendant les minutes où le batch tourne** !
-  * Pour un batch de **10 minutes par nuit** (soit **5 heures par mois** au total) en `eu-west-3c` :
-    * Calcul EC2 Spot `t3.micro` : `5 h x 0,0040 $/h` = **0,020 $ / mois**
-    * Disque EBS `gp3` 8 Go éphémère (5 h sur 730 h) : `0,70 $ x (5 / 730)` = **0,0048 $ / mois**
-    * **Coût total réel du Worker Spot auto-destructeur : ~0,025 $ / mois (soit 2,5 centimes par mois !)**
-  * Même pour un gros batch lourd de **2 heures par nuit** (60 heures / mois) :
-    * Calcul EC2 Spot `t3.micro` : `60 h x 0,0040 $/h` = **0,24 $ / mois**
-    * Disque EBS `gp3` 8 Go éphémère (60 h sur 730 h) : `0,70 $ x (60 / 730)` = **0,058 $ / mois**
-    * **Total mensuel (2h/nuit) : ~0,30 $ / mois !**
-
+* **Ce qui est déployé :** Launch Template EC2 Spot `t3.micro` (`0 instance` allumée au repos). L'instance est créée à la demande (ou à 02h00 la nuit), vide la file SQS, génère les factures PDF, puis **se détruit intégralement avec son disque EBS (`shutdown -h now` -> `terminated`)**.
+* **Notre conso réelle sur AWS :**
+  * 2 exécutions Spot éphémères (`i-02de293ce918a7d5c`, `i-08694ab1be81f42b5`) -> **0,00 $**.
+* **Tarif Spot réel relevé en direct sur AWS `eu-west-3` (Paris) :**
+  * **EC2 `t3.micro` Spot :** **0,0040 $ / heure** en `eu-west-3c` (contre `0,0118 $/h` en On-Demand, soit **-66 % de réduction**).
+  * **Coût pour 2h de batch par nuit (60h / mois) :**
+    * Calcul Spot (`60 h x 0,0040 $/h`) = **0,24 $ / mois**
+    * Disque EBS 8 Go pendant ces 60h seulement (`60h / 730h x 0,70 $`) = **0,06 $ / mois**
+    * **Coût total du Worker Batch Spot = 0,30 $ / mois !**
 
 ---
 
-## 2. Comparaison Financière : Notre Architecture Hybride vs Architecture Full Serverless selon le Nombre de Clients
+## 2. Comparaison Simple : Notre Architecture Hybride vs Full Serverless
 
-Pour déterminer quelle architecture est financièrement la plus judicieuse selon la taille de l'entreprise (en **région `eu-west-3` Paris**, **hors Free Tier 12 mois** pour évaluer la rentabilité pérenne à long terme), comparons deux architectures :
+Pourquoi avons-nous choisi une **architecture hybride** plutôt que du **100 % Serverless** ?
+Pour répondre clairement, il suffit de comparer les **2 seules briques qui changent** :
+1. **Le Back-Office (Génération des Factures PDF)** : *Worker EC2 Spot* vs *Fonction Lambda*.
+2. **Le Front-End (Site Web)** : *Serveur EC2* vs *S3 + CloudFront + API Gateway*.
 
-1. **Architecture A — Full Serverless :**
-   * **Front-End :** Site statique sur **Amazon S3 + CloudFront** + **Amazon API Gateway (HTTP API)** (`1,00 $ / million d'appels`) + **AWS Lambda** (`create-order`).
-   * **Back-Office (Colisage + Facture PDF) :** Une **2e fonction AWS Lambda** (`generate-invoice`, 512 Mo de RAM, 3 secondes par facture PDF).
-   * **Données & Messaging :** DynamoDB + SQS + SNS + S3 + Cognito (identiques dans les deux architectures).
-2. **Architecture B — Notre Architecture Hybride (EC2 Front + Lambda + Worker Batch EC2 Spot Éphémère) :**
-   * **Front-End :** Instance **EC2 `t3.micro`** (ou **ALB + Auto Scaling Group** lors des fortes charges).
-   * **Prise de commande :** **AWS Lambda** (`create-order`) + **SQS** + **SNS**.
-   * **Données & Messaging :** DynamoDB + SQS + SNS + S3 + Cognito
-   * **Back-Office (Colisage + Facture PDF) :** **Worker Batch EC2 Spot Éphémère** (`0,0040 $/h`, détruit automatiquement dès que la file SQS est vide).
+*(Les briques Cognito, DynamoDB, SQS, SNS et S3 sont identiques dans les deux architectures).*
 
 ---
 
-### A. Comparaison de la Brique n°1 : Le Traitement Batch (Facturation PDF & Colisage) — Lambda vs EC2 Spot Éphémère
+### A. Comparaison n°1 : Générer les Factures PDF (EC2 Spot vs Lambda)
 
-* **Sur AWS Lambda (Full Serverless) :**
-  * Générer un PDF avec `fpdf2`, l'uploader sur S3 et mettre à jour DynamoDB demande **512 Mo de RAM (`0,5 Go`)** pendant **3 secondes** = **1,5 Go-seconde par commande**.
-  * Coût unitaire hors Free Tier : `1,5 Go-s x 0,00001667 $ + 0,0000002 $ (requête)` = **0,0000252 $ par commande** (soit **2,52 $ pour 100 000 commandes**).
-  * **Limite technique dure :** Une fonction Lambda a un **timeout strict de 15 minutes maximum**. Si l'entreprise doit générer un rapport comptable consolidé ou retraiter un lot massif de plus de 15 minutes, Lambda échoue (`Task timed out after 900.00 seconds`).
-* **Sur notre Worker EC2 Spot Éphémère (`t3.micro` à `0,0040 $/h` qui s'auto-détruit après le batch) :**
-  * Sur une instance EC2 déjà chaude (sans *cold start* à chaque commande), le script Python en boucle traite **1 commande toutes les 0,15 seconde** (soit **24 000 commandes / heure**).
-  * Coût horaire tout compris (Spot `0,0040 $/h` + EBS `gp3` proratisé `0,0010 $/h`) = **0,0050 $ / heure**, soit **0,00000021 $ par commande** (**120 fois moins cher par commande que Lambda** dès que l'instance traite un lot continu !).
-  * Même en comptant un réveil quotidien fixe de **2h par nuit (60h/mois)** pour absorber les lots et rapports d'audit : le coût fixe est de **0,30 $ / mois** (avec destruction EBS) à **0,94 $ / mois** (si volume EBS conservé).
-  * **Seuil de rentabilité du Batch (Break-Even Point) :**
-    * Dès **12 000 commandes / mois** (ou dès qu'un traitement par lot dépasse 15 minutes), **le Worker EC2 Spot éphémère bat financièrement et techniquement AWS Lambda**.
-
----
-
-### B. Comparaison de la Brique n°2 : Le Front-End Web — EC2 / ALB vs S3 + CloudFront + API Gateway
-
-Supposons qu'un **client actif** effectue en moyenne **20 pages vues / appels API** par visite et passe **1 commande**.
-
-* **En Full Serverless (S3 + CloudFront + API Gateway HTTP) :**
-  * Coût fixe au repos (0 client) : **0,00 $ / mois**.
-  * Coût variable : API Gateway HTTP coûte **1,00 $ par million de requêtes** + CloudFront (~0,085 $/Go transféré).
-  * Pour **10 000 clients/mois** (200 000 appels API) : **~0,25 $ / mois**.
-  * Pour **500 000 clients/mois** (10 millions d'appels API + 50 Go de trafic) : **~14,25 $ / mois**.
-  * Pour **5 000 000 de clients/mois** (100 millions d'appels API + 500 Go de trafic) : **~142,50 $ / mois**.
-* **Sur EC2 Front-End :**
-  * **Mode 1 EC2 `t3.micro` seule (`enable_autoscaling_alb = false`) :**
-    * Pendant les 12 premiers mois (Free Tier) : **0,00 $ / mois**.
-    * Hors Free Tier : **9,31 $ / mois fixes** (`8,61 $` EC2 + `0,70 $` EBS), quel que soit le nombre de requêtes (jusqu'à saturation CPU ~50 req/s).
-  * **Mode Haute Disponibilité Multi-AZ (`enable_autoscaling_alb = true` : ALB + 2 EC2 `t3.micro`) :**
-    * Coût de base hors Free Tier : **~36,36 $ / mois** (`17,74 $` d'ALB + `2 x 9,31 $` d'instances EC2).
+* **Option Full Serverless (une 2e fonction Lambda qui génère le PDF) :**
+  * Générer un PDF lourd demande **512 Mo de RAM pendant 3 secondes** (`1,5 Go-seconde` par facture).
+  * **Prix catalogue d'une facture PDF sur Lambda :** **0,000025 $ par commande** (soit **2,50 $ pour 100 000 commandes**).
+  * **Limite technique majeure :** Lambda plante au bout de **15 minutes maximum** (impossible de faire un gros traitement comptable de fin de journée en une seule fois).
+* **Notre Option (Worker EC2 Spot Éphémère à 0,30 $ / mois pour 2h/nuit) :**
+  * L'instance Spot `t3.micro` déjà démarrée génère les PDF à la chaîne sans temps de démarrage (*cold start*) pour **0,30 $ / mois** (base 2h/nuit).
+* **Verdict & Chiffre Clé à retenir :**
+  * **Comparaison sur le tarif catalogue (hors quota gratuit) :**
+    * `0,30 $ / 0,000025 $` = **12 000 commandes / mois** (~400 commandes / jour).
+    * **Dès 12 000 commandes/mois**, le Worker EC2 Spot (`0,30 $/mois`) coûte moins cher que Lambda.
+  * **Comparaison en comptant le cadeau mensuel gratuit d'AWS Lambda (*Always Free* : 400 000 Go-s/mois) :**
+    * Le quota gratuit de Lambda permet de générer gratuitement jusqu'à `400 000 / 1,5` = **266 000 factures PDF / mois**.
+    * Au-delà de **266 000 commandes / mois** (ou dès que le lot dépasse **15 minutes**), le Worker EC2 Spot s'impose dans tous les cas.
 
 ---
 
-### C. Tableau Décisionnel Global : Quelle architecture choisir selon le nombre de clients / mois ?
+### B. Comparaison n°2 : Héberger le Site Web Front-End (EC2 vs S3 + API Gateway)
 
-*(Coûts mensuels totaux estimés en `eu-west-3`, hors période d'essai 12 mois mais en conservant les paliers **Always Free** permanents de Lambda, DynamoDB, SQS, SNS et Cognito)*
+*(Hypothèse simple : 1 client visite le site = 20 clics/appels API et 1 commande)*
 
-| Volume Mensuel | Nb de Commandes / mois | Appels API / mois | Coût Mensuel **Full Serverless** (API Gateway + 2 Lambdas) | Coût Mensuel **Hybride Monolithique** (1 EC2 Front + Lambda + Spot) | Coût Mensuel **Hybride HA Multi-AZ** (ALB + ASG 2 EC2 + Lambda + Spot) | Solution la plus judicieuse financièrement |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Palier 1 : Lancement / TPE**<br>*(0 à 5 000 clients)* | 0 à 5 000 | 0 à 100 000 | **0,00 $ à 0,15 $ / mois**<br>*(Lambda/DDB/Cognito couverts par Always Free)* | **9,33 $ / mois**<br>*(0,00 $ la 1re année avec Free Tier EC2)* | **36,40 $ / mois** | **Full Serverless** (ou **Hybride 1 EC2** la 1re année grâce aux 750h Free Tier). Évite de payer un serveur allumé 24h/24 quand le trafic est quasi nul. |
-| **Palier 2 : PME en croissance**<br>*(5 000 à 50 000 clients)* | 5 000 à 50 000 | 100 000 à 1,5 M | **1,50 $ à 3,80 $ / mois**<br>*(Tout le calcul PDF tient encore dans les 400k Go-s Always Free)* | **9,60 $ / mois** | **37,20 $ / mois** | **Full Serverless + Worker EC2 Spot ponctuel**. Le Front-End Serverless reste moins cher qu'un ALB tant que le trafic d'API est < 10M de requêtes. |
-| **Palier 3 : E-Commerce Établi**<br>*(50 000 à 300 000 clients)* | 50 000 à 300 000 | 1,5 M à 15 M | **22,00 $ à 48,00 $ / mois**<br>*(Dépassement du Free Tier Lambda PDF + Cognito MAU + API Gateway)* | **12,50 $ / mois** *(1 EC2 t3.small)* | **41,50 $ / mois** | **Bascule vers l'Architecture Hybride !** Au-delà de **~266 000 commandes/mois**, le quota gratuit Lambda est épuisé et le **Worker EC2 Spot (-75 %)** devient beaucoup plus rentable que Lambda pour générer les PDF. |
-| **Palier 4 : Grande Échelle / Black Friday**<br>*(> 1 000 000 clients)* | > 1 000 000 | > 50 M | **145,00 $ à 310,00 $ / mois**<br>*(Explosion des coûts API Gateway à 1$/M et Lambda au Go-s + blocage timeout 15 min)* | *Saturé* | **65,00 $ à 95,00 $ / mois**<br>*(ALB + ASG 2 à 4 EC2 + Batch EC2 Spot)* | **Architecture Hybride HA (ALB + ASG EC2 + Batch EC2 Spot)** : Jusqu'à **3 fois moins chère** que le Full Serverless à fort trafic, car un ALB + EC2 absorbe des dizaines de millions de requêtes sans facturation à l'appel API, et l'EC2 Spot traite les millions de PDF sans limite de 15 minutes. |
+* **Option Full Serverless (Site statique S3 + CloudFront + API Gateway) :**
+  * **0,00 $ de coût fixe** quand il n'y a aucun visiteur.
+  * Facturé au clic : environ **0,05 $ pour 1 000 clients** (API Gateway coûte `1,00 $ par million de requêtes` + trafic CloudFront).
+* **Notre Option (Front-End sur EC2) :**
+  * **1re année :** **0,00 $ / mois** (couvert par les 750h/mois du Free Tier EC2).
+  * **Après la 1re année :**
+    * **1 EC2 `t3.micro` seule :** Coût fixe de **9,31 $ / mois**, peu importe qu'il y ait 100 ou 150 000 clients.
+    * **Haute Disponibilité (Load Balancer ALB + 2 EC2) :** Coût fixe de **36,36 $ / mois**.
 
 ---
 
-### Conclusion 
+### C. Tableau Récapitulatif Simple : Quelle solution est la plus rentable selon le nombre de clients ?
 
-1. **Pendant la 1re année (et pour notre démonstration) :** Notre architecture **Hybride (1 EC2 `t3.micro` + Lambda + SQS/SNS + Batch EC2 Spot éphémère)** nous coûte **exactement 0,00 $** (prouvé par AWS Cost Explorer), tout en démontrant la maîtrise complète de l'IaaS (EC2 On-Demand, EC2 Spot, Auto Scaling, ALB) et du PaaS/Serverless (Lambda, DynamoDB, SQS, SNS, S3, Cognito).
-2. **En production réelle (hors Free Tier 12 mois) :**
-   * **Sous 50 000 clients/mois :** Une approche **Full Serverless** est imbattable financièrement (**< 4 $/mois**), car l'offre *Always Free* permanente de Lambda (400 000 Go-s) et DynamoDB (25 RCU/WCU) absorbe 100 % du trafic sans aucun coût fixe de serveur allumé la nuit.
-   * **Dès que les traitements batch s'alourdissent (> 44 000 commandes/mois hors Free Tier, ou > 266 000 commandes/mois avec Free Tier, ou batch > 15 minutes) :** Le **Worker Batch EC2 Spot éphémère (`0,0040 $/h`)** avec auto-destruction (`terminate`) s'impose en réduisant de **75 % à 90 %** la facture de calcul des PDF.
-   * **À fort trafic (> 300 000 à 1 000 000 de clients/mois) :** L'architecture **Hybride complète (ALB + Auto Scaling EC2 + Worker EC2 Spot)** devient globalement plus économique que le Full Serverless, car la facturation à la requête d'API Gateway (`1,00 $ / million`) et à la milliseconde de Lambda finit par dépasser le coût fixe plafonné d'un pool d'instances EC2.
+*(Coûts mensuels totaux après la 1re année, incluant les quotas gratuits à vie Always Free)*
+
+| Nombre de Clients / Mois (= Commandes / Mois) | Architecture **Full Serverless** (API Gateway + 2 Lambdas) | Notre Architecture **Hybride Simple** (1 EC2 Front + Lambda + Spot) | Notre Architecture **Hybride Haute Dispo** (ALB + 2 EC2 + Lambda + Spot) | Quelle est la solution la plus judicieuse financièrement ? |
+| :--- | :--- | :--- | :--- | :--- |
+| **1. Petit trafic**<br>**0 à 10 000 clients / mois** | **~0,50 $ / mois** | **9,60 $ / mois**<br>*(0,00 $ la 1re année)* | **36,60 $ / mois** | **Full Serverless** (ou **Hybride 1 EC2 pendant la 1re année gratuite**). Inutile de payer une machine EC2 à 9,31 $/mois s'il y a très peu de clients. |
+| **2. Trafic moyen**<br>**10 000 à 200 000 clients / mois** | **1,00 $ à 12,00 $ / mois** | **9,60 $ / mois** | **37,00 $ / mois** | **Égalité (~10 $/mois)** vers **180 000 clients/mois** : le coût des clics sur API Gateway + CloudFront rattrape le prix fixe d'une petite instance EC2 (`9,31 $`). |
+| **3. Fort trafic**<br>**300 000 clients / mois** | **~28,00 $ / mois**<br>*(Quota gratuit Lambda PDF dépassé + API Gateway)* | **~13,00 $ / mois** | **~39,00 $ / mois** | **Architecture Hybride !** À partir de **266 000 commandes/mois**, Lambda devient payante pour les PDF alors que le Worker EC2 Spot ne coûte que **0,30 $/mois**. |
+| **4. Très fort trafic**<br>**1 000 000 clients / mois** | **~135,00 $ / mois**<br>*(API Gateway + Lambda PDF explosent + blocage des 15 min)* | *1 seule EC2 ne suffit plus* | **~55,00 $ / mois**<br>*(ALB + Auto Scaling 2 à 4 EC2 + Spot)* | **Architecture Hybride Haute Dispo (ALB + ASG + Spot)** : **2,5 fois moins chère** que le Full Serverless, car le coût des serveurs EC2 est plafonné alors que le Serverless facture chaque million de requêtes plein pot. |
+
+---
+
+### Résumé en 3 Phrases pour la Soutenance
+
+1. **Aujourd'hui (Année 1 / Démo) :** Notre architecture Hybride coûte **0,00 $** sur AWS grâce au Free Tier (750h EC2 + Always Free Lambda/DynamoDB/SQS/SNS/Cognito).
+2. **Pour la génération des factures PDF (Batch) :** Le Worker EC2 Spot auto-destructeur ne coûte que **0,30 $/mois** (pour 2h/nuit à `0,0040 $/h`). Il est plus rentable que Lambda dès **12 000 commandes/mois** en tarif brut (et dès **266 000 commandes/mois** en comptant le quota gratuit Lambda), tout en faisant sauter la limite des **15 minutes** de Lambda.
+3. **Pour le site Front-End :** Le **Full Serverless** est plus économique pour démarrer à petit trafic (**< 180 000 clients/mois** hors Free Tier), tandis que notre architecture **EC2 + Load Balancer + Auto Scaling** devient **2 à 3 fois moins chère** à grande échelle (**> 300 000 à 1 000 000 de clients/mois**).
