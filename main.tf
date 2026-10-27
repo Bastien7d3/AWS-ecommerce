@@ -1,8 +1,65 @@
 # ==============================================================================
 # ORCHESTRATION GLOBALE DU PROJET CLOUDSHOP AWS (FISA 2026)
-# Connecte les 5 briques : DynamoDB/S3 <-> SNS/SQS <-> Lambda <-> EC2 Front <-> EC2 Spot
+# Fichier racine unique reliant les 5 modules dans ./modules/ :
+#   01-database-dynamodb <-> 02-messaging-sns-sqs <-> 03-serverless-lambda
+#   <-> 04-frontend-ec2 <-> 05-batch-ec2-spot
 # ==============================================================================
 
+terraform {
+  required_version = ">= 1.5.0"
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+    archive = {
+      source  = "hashicorp/archive"
+      version = "~> 2.4"
+    }
+  }
+}
+
+provider "aws" {
+  region = var.aws_region
+
+  default_tags {
+    tags = {
+      Project   = "CloudShop-FISA2026"
+      ManagedBy = "Terraform"
+    }
+  }
+}
+
+# ------------------------------------------------------------------------------
+# VARIABLES GLOBALES
+# ------------------------------------------------------------------------------
+variable "aws_region" {
+  description = "Région AWS cible (Paris)"
+  type        = string
+  default     = "eu-west-3"
+}
+
+variable "project_name" {
+  description = "Préfixe commun des ressources du projet"
+  type        = string
+  default     = "cloudshop"
+}
+
+variable "notification_email" {
+  description = "Adresse e-mail optionnelle pour recevoir toutes les notifications SNS"
+  type        = string
+  default     = ""
+}
+
+variable "enable_autoscaling_alb" {
+  description = "Passe à true pour déployer le Load Balancer Multi-AZ et l'Auto Scaling Group (1 à 4 EC2)"
+  type        = bool
+  default     = false
+}
+
+# ------------------------------------------------------------------------------
+# DONNÉES DU COMPTE & RÉSEAU PAR DÉFAUT
+# ------------------------------------------------------------------------------
 data "aws_caller_identity" "current" {}
 
 data "aws_vpc" "default" {
@@ -35,6 +92,10 @@ module "auth_cognito" {
   source       = "./modules/00-auth-cognito"
   project_name = var.project_name
 }
+
+# ------------------------------------------------------------------------------
+# APPEL DES 5 MODULES DU PROJET
+# ------------------------------------------------------------------------------
 
 # 1. Base de données DynamoDB (Catalogue & Commandes) + Bucket S3 (Factures PDF)
 module "database_dynamodb" {
@@ -106,4 +167,49 @@ module "batch_ec2_spot" {
   orders_batch_queue_url          = module.messaging_sns_sqs.orders_batch_queue_url
   orders_batch_queue_arn          = module.messaging_sns_sqs.orders_batch_queue_arn
   shipping_notification_topic_arn = module.messaging_sns_sqs.shipping_notification_topic_arn
+  order_confirmation_topic_arn    = module.messaging_sns_sqs.order_confirmation_topic_arn
+}
+
+# ------------------------------------------------------------------------------
+# SORTIES (OUTPUTS)
+# ------------------------------------------------------------------------------
+output "website_url" {
+  description = "URL publique de la boutique CloudShop"
+  value       = module.frontend_ec2.website_url
+}
+
+output "front_instance_id" {
+  description = "Identifiant de l'instance EC2 Front-End (ou Auto Scaling Group)"
+  value       = module.frontend_ec2.front_instance_id
+}
+
+output "spot_launch_template_id" {
+  description = "Identifiant du Launch Template EC2 Spot (Périodique & Lancement à la demande)"
+  value       = module.batch_ec2_spot.spot_launch_template_id
+}
+
+output "dynamodb_tables" {
+  description = "Tables DynamoDB créées"
+  value = {
+    products = module.database_dynamodb.products_table_name
+    orders   = module.database_dynamodb.orders_table_name
+  }
+}
+
+output "s3_invoices_bucket" {
+  description = "Bucket S3 stockant les factures PDF générées"
+  value       = module.database_dynamodb.invoices_bucket_name
+}
+
+output "sns_topics" {
+  description = "Topics SNS de notification"
+  value = {
+    order_confirmation    = module.messaging_sns_sqs.order_confirmation_topic_arn
+    shipping_notification = module.messaging_sns_sqs.shipping_notification_topic_arn
+  }
+}
+
+output "sqs_batch_queue_url" {
+  description = "File d'attente SQS alimentant le Worker EC2 Spot"
+  value       = module.messaging_sns_sqs.orders_batch_queue_url
 }

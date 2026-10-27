@@ -213,9 +213,17 @@ HTML_PAGE = """<!DOCTYPE html>
       const oldText = btn.textContent;
       btn.textContent = '⏳ Création de l instance EC2 Spot...';
       try {
-        const res = await fetch('/api/launch-spot', { method: 'POST' });
+        const res = await fetch('/api/launch-spot', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: '{}'
+        });
         const data = await res.json();
-        showToast(`🚀 Instance EC2 Spot $${data.instance_id} créée à la demande ! Elle démarre, traite la file SQS, génère les PDF et s'auto-détruira.`);
+        if (data.error) {
+          showToast(`❌ Erreur : $${data.error}`);
+        } else {
+          showToast(`🚀 Instance Worker $${data.instance_id} ($${data.mode}) créée à la demande ! Elle démarre, traite la file SQS, génère les PDF et s'auto-détruira.`);
+        }
         await loadSpotStatus();
       } finally {
         btn.disabled = false;
@@ -435,45 +443,72 @@ class ShopHandler(BaseHTTPRequestHandler):
             self.end_headers()
 
     def do_POST(self):
-        length = int(self.headers.get("Content-Length", 0))
-        body = json.loads(self.rfile.read(length).decode("utf-8")) if length > 0 else {}
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            raw = self.rfile.read(length).decode("utf-8") if length > 0 else ""
+            body = json.loads(raw) if raw.strip() else {}
 
-        if self.path == "/api/order":
-            lmb = boto3.client("lambda", region_name=REGION)
-            resp = lmb.invoke(
-                FunctionName=LAMBDA_NAME,
-                InvocationType="RequestResponse",
-                Payload=json.dumps(body),
-            )
-            result = json.loads(resp["Payload"].read().decode("utf-8"))
-            self._send_json(200, result)
-        elif self.path == "/api/subscribe":
-            email = body.get("email", "").strip()
-            sns = boto3.client("sns", region_name=REGION)
-            filter_policy = json.dumps({"customer_email": [email]})
-            for topic_arn in (SNS_CONFIRM_ARN, SNS_SHIP_ARN):
+            if self.path == "/api/order":
+                lmb = boto3.client("lambda", region_name=REGION)
+                resp = lmb.invoke(
+                    FunctionName=LAMBDA_NAME,
+                    InvocationType="RequestResponse",
+                    Payload=json.dumps(body),
+                )
+                result = json.loads(resp["Payload"].read().decode("utf-8"))
+                self._send_json(200, result)
+            elif self.path == "/api/subscribe":
+                email = body.get("email", "").strip()
+                sns = boto3.client("sns", region_name=REGION)
+                filter_policy = json.dumps({"customer_email": [email]})
                 sns.subscribe(
-                    TopicArn=topic_arn,
+                    TopicArn=SNS_CONFIRM_ARN,
                     Protocol="email",
                     Endpoint=email,
                     Attributes={"FilterPolicy": filter_policy},
                 )
-            self._send_json(200, {
-                "status": "SUBSCRIBED",
-                "message": f"Abonnement SNS (avec FilterPolicy sur {email}) envoyé ! Cliquez sur 'Confirm subscription' dans votre boîte mail.",
-            })
-        elif self.path == "/api/launch-spot":
-            ec2 = boto3.client("ec2", region_name=REGION)
-            run_resp = ec2.run_instances(
-                LaunchTemplate={"LaunchTemplateId": SPOT_LT_ID, "Version": "$Latest"},
-                MinCount=1,
-                MaxCount=1,
-            )
-            inst_id = run_resp["Instances"][0]["InstanceId"]
-            self._send_json(200, {"status": "LAUNCHED", "instance_id": inst_id})
-        else:
-            self.send_response(404)
-            self.end_headers()
+                self._send_json(200, {
+                    "status": "SUBSCRIBED",
+                    "message": f"Abonnement SNS (avec FilterPolicy sur {email}) envoyé ! Cliquez sur 'Confirm subscription' dans votre boîte mail.",
+                })
+            elif self.path == "/api/launch-spot":
+                ec2 = boto3.client("ec2", region_name=REGION)
+                inst_id = None
+                mode_used = "EC2 Spot"
+                # 1. Essaie d'abord sur le marché Spot (t3.micro puis t3.small sur n'importe quelle AZ disponible)
+                for itype in ("t3.micro", "t3.small"):
+                    try:
+                        run_resp = ec2.run_instances(
+                            LaunchTemplate={"LaunchTemplateId": SPOT_LT_ID, "Version": "$Latest"},
+                            InstanceType=itype,
+                            InstanceMarketOptions={
+                                "MarketType": "spot",
+                                "SpotOptions": {"SpotInstanceType": "one-time"},
+                            },
+                            MinCount=1,
+                            MaxCount=1,
+                        )
+                        inst_id = run_resp["Instances"][0]["InstanceId"]
+                        mode_used = f"EC2 Spot ({itype})"
+                        break
+                    except Exception:
+                        continue
+                # 2. Fallback automatique si AWS n'a plus de capacité Spot dans la région à cette seconde (Continuité de service)
+                if not inst_id:
+                    run_resp = ec2.run_instances(
+                        LaunchTemplate={"LaunchTemplateId": SPOT_LT_ID, "Version": "$Latest"},
+                        InstanceType="t3.micro",
+                        MinCount=1,
+                        MaxCount=1,
+                    )
+                    inst_id = run_resp["Instances"][0]["InstanceId"]
+                    mode_used = "EC2 Éphémère (Fallback Capacité Spot AWS -> Free Tier t3.micro)"
+                self._send_json(200, {"status": "LAUNCHED", "instance_id": inst_id, "mode": mode_used})
+            else:
+                self.send_response(404)
+                self.end_headers()
+        except Exception as e:
+            self._send_json(500, {"error": str(e)})
 
 
 if __name__ == "__main__":

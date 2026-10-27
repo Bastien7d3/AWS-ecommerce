@@ -45,3 +45,7 @@ variable "orders_batch_queue_arn" {
 variable "shipping_notification_topic_arn" {
   type = string
 }
+
+variable "order_confirmation_topic_arn" {
+  type = string
+}

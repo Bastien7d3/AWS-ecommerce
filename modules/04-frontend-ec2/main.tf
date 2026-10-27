@@ -71,7 +71,7 @@ resource "aws_iam_role_policy" "front_ec2_policy" {
       },
       {
         Effect   = "Allow"
-        Action   = ["ec2:RunInstances", "ec2:DescribeInstances", "ec2:CreateTags"]
+        Action   = ["ec2:RunInstances", "ec2:DescribeInstances", "ec2:CreateTags", "ec2:RequestSpotInstances", "ec2:DescribeSubnets"]
         Resource = "*"
       },
       {

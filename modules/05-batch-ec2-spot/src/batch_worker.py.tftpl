@@ -18,6 +18,7 @@ import json
 import os
 import time
 import uuid
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 import boto3
@@ -29,6 +30,7 @@ SQS_QUEUE_URL = "${sqs_queue_url}"
 S3_BUCKET = "${s3_bucket}"
 DDB_ORDERS_TABLE = "${orders_table}"
 SNS_SHIPPING_ARN = "${sns_shipping_arn}"
+SNS_CONFIRM_ARN = "${sns_confirm_arn}"
 
 CARRIER_BOXES = [
     {"code": "COLIS_S",  "label": "Colis S (Petit)",      "dims": (20, 15, 10),  "max_vol": 3000,   "max_weight": 2.0,   "shipping_cost": 4.90},
@@ -194,6 +196,24 @@ def get_instance_id():
         return "ec2-spot-worker"
 
 
+def get_front_public_ip():
+    try:
+        ec2 = boto3.client("ec2", region_name=REGION)
+        res = ec2.describe_instances(
+            Filters=[
+                {"Name": "tag:Name", "Values": ["*front-ec2*"]},
+                {"Name": "instance-state-name", "Values": ["running"]},
+            ]
+        )
+        for r in res.get("Reservations", []):
+            for inst in r.get("Instances", []):
+                if inst.get("PublicIpAddress"):
+                    return inst["PublicIpAddress"]
+    except Exception:
+        pass
+    return None
+
+
 def main():
     sqs = boto3.client("sqs", region_name=REGION)
     s3 = boto3.client(
@@ -205,6 +225,7 @@ def main():
     ddb = boto3.resource("dynamodb", region_name=REGION).Table(DDB_ORDERS_TABLE)
     sns = boto3.client("sns", region_name=REGION)
     instance_id = get_instance_id()
+    front_ip = get_front_public_ip()
 
     print(f"[Spot Worker {instance_id}] Demarrage du batch a la demande sur {SQS_QUEUE_URL}...")
 
@@ -238,11 +259,14 @@ def main():
             s3_key = f"invoices/facture_{order_id}.pdf"
             s3.upload_file(local_pdf, S3_BUCKET, s3_key, ExtraArgs={"ContentType": "application/pdf"})
 
-            presigned_url = s3.generate_presigned_url(
-                "get_object",
-                Params={"Bucket": S3_BUCKET, "Key": s3_key},
-                ExpiresIn=86400,
-            )
+            if front_ip:
+                invoice_link = f"http://{front_ip}/api/invoice?key={urllib.parse.quote(s3_key)}"
+            else:
+                invoice_link = s3.generate_presigned_url(
+                    "get_object",
+                    Params={"Bucket": S3_BUCKET, "Key": s3_key},
+                    ExpiresIn=86400,
+                )
 
             processed_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
             ddb.update_item(
@@ -270,19 +294,23 @@ def main():
             if customer_email:
                 msg_attrs["customer_email"] = {"DataType": "String", "StringValue": customer_email}
 
+            email_subject = f"[CloudShop] Commande {order_id} expediee ! Suivi : {tracking_number}"
+            email_body = (
+                f"Bonjour {order.get('customer_name', 'Client')},\n\n"
+                f"Votre commande {order_id} a ete emballee et expediee par le Worker Batch EC2 ({instance_id}).\n"
+                f"- Destinataire : {customer_email or 'Tous les abonnes'}\n"
+                f"- Statut : SHIPPED\n"
+                f"- Numero de suivi transporteur : {tracking_number}\n"
+                f"- Colis retenu : {packing['box_label']} ({packing['box_dimensions_cm']})\n"
+                f"- Total TTC : {total_ttc:.2f} EUR\n\n"
+                f"Telecharger votre Facture PDF officielle :\n{invoice_link}\n"
+            )
+
+            # Publie sur le Topic principal (deja confirme par le client)
             sns.publish(
-                TopicArn=SNS_SHIPPING_ARN,
-                Subject=f"[CloudShop] Commande {order_id} expediee ! Suivi : {tracking_number}",
-                Message=(
-                    f"Bonjour {order.get('customer_name', 'Client')},\n\n"
-                    f"Votre commande {order_id} a ete emballee et expediee par le batch EC2 Spot ({instance_id}).\n"
-                    f"- Destinataire : {customer_email or 'Tous les abonnes'}\n"
-                    f"- Statut : SHIPPED\n"
-                    f"- Numero de suivi : {tracking_number}\n"
-                    f"- Colis retenu : {packing['box_label']} ({packing['box_dimensions_cm']})\n"
-                    f"- Total TTC : {total_ttc:.2f} EUR\n\n"
-                    f"Facture PDF : {presigned_url}\n"
-                ),
+                TopicArn=SNS_CONFIRM_ARN,
+                Subject=email_subject,
+                Message=email_body,
                 MessageAttributes=msg_attrs,
             )
 
