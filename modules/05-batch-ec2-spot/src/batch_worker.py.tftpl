@@ -21,6 +21,7 @@ import uuid
 import urllib.request
 from datetime import datetime, timezone
 import boto3
+from botocore.config import Config
 from fpdf import FPDF
 
 REGION = "${region}"
@@ -195,7 +196,12 @@ def get_instance_id():
 
 def main():
     sqs = boto3.client("sqs", region_name=REGION)
-    s3 = boto3.client("s3", region_name=REGION)
+    s3 = boto3.client(
+        "s3",
+        region_name=REGION,
+        endpoint_url=f"https://s3.{REGION}.amazonaws.com",
+        config=Config(signature_version="s3v4", s3={"addressing_style": "virtual"}),
+    )
     ddb = boto3.resource("dynamodb", region_name=REGION).Table(DDB_ORDERS_TABLE)
     sns = boto3.client("sns", region_name=REGION)
     instance_id = get_instance_id()
