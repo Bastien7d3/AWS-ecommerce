@@ -1,38 +1,44 @@
 # Module 01 : Base de Données DynamoDB & Stockage S3
 
-Ce dossier contient l'infrastructure de persistance des données de la boutique ([`main.tf`](./main.tf)).
+Ce module gère la persistance des données transactionnelles et le stockage des fichiers volumineux ([`main.tf`](./main.tf)).
 
 ---
 
-## 1. Ce que déploie ce module
+## 1. Composants Déployés
 
-1. **Table DynamoDB `products` (Catalogue de la boutique) :**
-   * Clé primaire (Partition Key) : `product_id` (ex : `"PROD-01"`).
-   * Contient les articles pré-insérés automatiquement par Terraform (`aws_dynamodb_table_item.seed_products`) avec leur nom, prix HT (`price_eur`), stock disponible (`stock`), dimensions en cm (`dims_cm`) et poids en kg (`weight_kg`).
-2. **Table DynamoDB `orders` (Commandes & Journal d'Audit) :**
-   * Clé primaire (Partition Key) : `order_id` (ex : `"CMD-2026-..."`).
-   * Enregistre chaque commande passée par un client avec son statut évolutif (`PENDING` $\rightarrow$ `PACKAGED` $\rightarrow$ `SHIPPED`), le numéro de suivi transporteur, la taille du carton retenu et le chemin de la facture PDF.
-3. **Bucket Amazon S3 `invoices` (Stockage des Factures PDF & Rapports) :**
-   * Stocke les factures PDF générées par l'instance EC2 Spot (`invoices/facture_CMD-....pdf`) ainsi que les rapports JSON d'audit (`reports/report_CMD-....json`).
-
----
-
-## 2. Pourquoi cette configuration est 100 % Gratuite (AWS Free Tier)
-
-* **Piège évité sur DynamoDB :** Par défaut, beaucoup de tutoriels utilisent `billing_mode = "PAY_PER_REQUEST"` (On-Demand), qui est facturé dès la première requête hors crédits.
-* **Notre choix FinOps :** Nous utilisons `billing_mode = "PROVISIONED"` avec `read_capacity = 5` et `write_capacity = 5`. L'offre **Always Free** d'AWS inclut gratuitement **25 RCU et 25 WCU** cumulés sur le compte (nos 2 tables consomment $5 + 5 = 10\text{ unités} \le 25$, soit **0,00 €**).
-* **Stockage S3 :** L'option `force_destroy = true` permet à `terraform destroy` de vider et supprimer automatiquement le compartiment S3 même s'il contient des factures PDF, évitant tout stockage résiduel.
+1. **Table DynamoDB `products` (Catalogue Produits) :**
+   * Clé de partition : `product_id` (ex : `ATN-VIS-001`).
+   * Contient les références du catalogue pré-insérées automatiquement par Terraform, avec nom, catégorie, description, prix HT (`price_eur`), stock disponible (`stock`), dimensions en cm (`dims_cm`) et poids en kg (`weight_kg`).
+   * Ces dimensions et poids alimentent directement l'algorithme de calcul de colisage du Worker Spot.
+2. **Table DynamoDB `orders` (Commandes & Audit) :**
+   * Clé de partition : `order_id` (ex : `CMD-2026-XXXXXX`).
+   * Enregistre le cycle de vie complet de chaque commande : statut évolutif (`PENDING` → `SHIPPED`), coordonnées client, référence du carton retenu (`Colis S/M/L/XL`), taux de remplissage, numéro de suivi transporteur et clé S3 de la facture PDF.
+3. **Bucket Amazon S3 `invoices` (Archivage des Factures PDF) :**
+   * Stocke les factures PDF officielles générées par le Worker Spot (`invoices/facture_CMD-....pdf`).
+   * Configuré avec `force_destroy = true` pour permettre une destruction intégrale et propre lors d'un `terraform destroy` sans laisser de stockage orphelin.
 
 ---
 
-## 3. Comment ce module est connecté aux autres
+## 2. Flux de Données & Connexions
 
-* **Vers `03-serverless-lambda` :** La fonction Lambda reçoit les noms et ARN des tables `products` et `orders` pour décrémenter le stock et enregistrer la nouvelle commande au statut `PENDING`.
-* **Vers `04-frontend-ec2` :** Le serveur web Front-End lit la table `products` pour afficher le catalogue et la table `orders` pour afficher le suivi des commandes (ainsi que le lien de téléchargement du PDF depuis le bucket S3).
-* **Vers `05-batch-ec2-spot` :** Le worker EC2 Spot met à jour la table `orders` (`status = SHIPPED`, `tracking_number`, `carrier_box`) et dépose le fichier PDF dans le bucket S3 `invoices`.
+```
+[Front-End EC2] ──(Lecture Catalogue)──► Table DynamoDB 'products'
+       │
+   (Commande)
+       ▼
+ [Lambda Order] ──(Décrémente Stock)──► Table DynamoDB 'products'
+       │        ──(Insère PENDING)────► Table DynamoDB 'orders'
+       ▼
+ [SQS Queue]
+       ▼
+ [Worker Spot]  ──(Upload PDF)────────► Bucket Amazon S3 'invoices'
+                ──(Mise à jour SHIPPED)► Table DynamoDB 'orders'
+```
 
 ---
 
-## 4. Comment personnaliser ce module (Pour le groupe)
+## 3. Justification FinOps
 
-* **Ajouter un produit au catalogue :** Dans [`main.tf`](./main.tf), ajoutez simplement une entrée dans le bloc `locals { initial_products = { ... } }` en précisant `dims_cm` (format `"LongueurxLargeurxHauteur"`) et `weight_kg`.
+* **Mode Provisionné vs On-Demand :** Les tables sont configurées en mode `PROVISIONED` avec **5 RCU** (Read Capacity Units) et **5 WCU** (Write Capacity Units).
+* **Couverture Free Tier :** L'offre permanente *Always Free* d'AWS alloue **25 RCU et 25 WCU** au total sur le compte. Nos deux tables n'en consomment que 10 au total (5 + 5), garantissant une facturation de **0,00 €**.
+* **Stockage S3 :** Les factures PDF (environ 2,5 Ko par document) représentent un volume négligeable, largement inclus dans les 5 Go du Free Tier mensuel.

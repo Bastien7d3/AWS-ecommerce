@@ -86,16 +86,17 @@ flowchart TB
 
 ---
 
-## 3. Organisation Modulaire du Projet (Les 5 Grandes Parties)
+## 3. Organisation Modulaire du Projet (Les 6 Modules)
 
 Chaque partie de l'architecture possède son propre dossier dans [`modules/`](./modules/) avec son code Terraform et son **guide explicatif dédié** :
 
 | Dossier Module | Services AWS Gérés | Rôle & Connexions | Documentation Détaillée |
 | :--- | :--- | :--- | :--- |
+| **[`modules/00-auth-cognito/`](./modules/00-auth-cognito)** | **Amazon Cognito** (User Pool, App Client, Domaine) | Inscription et connexion sécurisée des clients par e-mail avec validation par code à 6 chiffres. | [EXPLICATIONS_AUTH_COGNITO.md](./modules/00-auth-cognito/EXPLICATIONS_AUTH_COGNITO.md) |
 | **[`modules/01-database-dynamodb/`](./modules/01-database-dynamodb)** | **DynamoDB** (`products`, `orders`) + **Amazon S3** (`invoices`) | Stocke le catalogue produits (pré-rempli), l'historique des commandes et les factures PDF. Configuré en mode `PROVISIONED` (5 RCU / 5 WCU = 100 % *Always Free*). | [EXPLICATIONS_DYNAMODB_S3.md](./modules/01-database-dynamodb/EXPLICATIONS_DYNAMODB_S3.md) |
 | **[`modules/02-messaging-sns-sqs/`](./modules/02-messaging-sns-sqs)** | **Amazon SNS** (2 Topics + `FilterPolicy`) + **Amazon SQS** (File batch) | Route les notifications e-mail vers le bon client via `FilterPolicy` (SNS) et conserve les commandes en attente jusqu'à 14 jours (SQS) en attendant le réveil du Worker EC2 Spot. | [EXPLICATIONS_SNS_SQS.md](./modules/02-messaging-sns-sqs/EXPLICATIONS_SNS_SQS.md) |
 | **[`modules/03-serverless-lambda/`](./modules/03-serverless-lambda)** | **AWS Lambda** (`create-order`) + **IAM** | Appelée par le Front-End EC2 lors d'un achat : décrémente le stock dans DynamoDB, crée la commande (`PENDING`), notifie SNS (`MessageAttributes`) et pousse dans SQS. | [EXPLICATIONS_LAMBDA.md](./modules/03-serverless-lambda/EXPLICATIONS_LAMBDA.md) |
-| **[`modules/04-frontend-ec2/`](./modules/04-frontend-ec2)** | **EC2 `t3.micro`** + **ALB** + **Auto Scaling Group** | Héberge l'interface web de la boutique (Catalogue, Abonnement e-mail SNS, bouton Commander via Lambda, console Admin de lancement manuel du Worker EC2 Spot et téléchargement PDF S3). | [EXPLICATIONS_FRONTEND_EC2.md](./modules/04-frontend-ec2/EXPLICATIONS_FRONTEND_EC2.md) |
+| **[`modules/04-frontend-ec2/`](./modules/04-frontend-ec2)** | **EC2 `t3.micro`** + **ALB** + **Auto Scaling** + **CloudFront** | Héberge l'interface web responsive, l'API d'authentification Cognito, la prise de commande Lambda, la console Admin Spot et le CDN Edge CloudFront. | [EXPLICATIONS_FRONTEND_EC2.md](./modules/04-frontend-ec2/EXPLICATIONS_FRONTEND_EC2.md) |
 | **[`modules/05-batch-ec2-spot/`](./modules/05-batch-ec2-spot)** | **Launch Template EC2 Spot** + **Planning Cron** + **FPDF2** | Aucune instance active au repos (`0,00 €/h`) : démarre périodiquement (02h00 UTC) ou sur clic Admin, vide la file SQS, calcule le carton (`S/M/L/XL`), génère le PDF sur S3, notifie SNS puis s'auto-détruit (`shutdown -h now` -> `terminated`). | [EXPLICATIONS_BATCH_SPOT.md](./modules/05-batch-ec2-spot/EXPLICATIONS_BATCH_SPOT.md) |
 
 ---

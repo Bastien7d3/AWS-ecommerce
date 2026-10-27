@@ -1,58 +1,43 @@
 # Module 02 : Messaging Événementiel (Amazon SNS & Amazon SQS)
 
-Ce dossier configure la couche de messagerie et de découplage asynchrone du projet ([`main.tf`](./main.tf)).
+Ce module implémente le bus d'événements et la file tampon garantissant le découplage asynchrone entre la prise de commande et le traitement d'entrepôt ([`main.tf`](./main.tf)).
 
 ---
 
-## 1. Comment Amazon SNS sait-il à qui envoyer l'e-mail ? (Routage & `FilterPolicy`)
+## 1. Composants Déployés
 
-C'est une question d'architecture essentielle à maîtriser pour l'oral :
-* **Différence entre Amazon SNS et un serveur SMTP / Amazon SES :**
-  * **Amazon SNS (Simple Notification Service)** n'est pas un serveur SMTP ouvert où l'on passe un champ `To: n'importe-qui@gmail.com` sans vérification (ce qui permettrait le spam). SNS est un bus **Pub/Sub** basé sur des **Topics** et des **Abonnements (`Subscriptions`) vérifiés**.
-  * Pour recevoir des e-mails d'un Topic SNS, une adresse e-mail doit d'abord être abonnée (`sns:Subscribe`) et l'utilisateur doit cliquer une seule fois sur le lien **« Confirm subscription »** envoyé par AWS (`no-reply@sns.amazonaws.com`).
-* **Comment éviter que tous les clients abonnés au Topic reçoivent les commandes des autres ? (`FilterPolicy` + `MessageAttributes`) :**
-  * Par défaut dans un Topic Pub/Sub, tous les abonnés reçoivent tous les messages publiés.
-  * Pour router chaque e-mail **uniquement vers le client concerné**, notre architecture utilise le mécanisme natif **SNS Message Filtering (`FilterPolicy`)** :
-    1. **Lors de l'inscription sur le site (`POST /api/subscribe`) :** Le serveur Front-End abonne l'adresse e-mail du client aux deux Topics SNS en y attachant une règle de filtrage :
-       ```json
-       {
-         "customer_email": ["client@domaine.fr"]
-       }
-       ```
-    2. **Lors de la publication du message (`sns.publish`) par la Lambda ou le Worker Spot :** Le code Python attache l'adresse e-mail de l'acheteur dans les `MessageAttributes` :
-       ```python
-       sns.publish(
-           TopicArn=TOPIC_ARN,
-           Subject=f"Confirmation de commande {order_id}",
-           Message=...,
-           MessageAttributes={
-               "customer_email": {
-                   "DataType": "String",
-                   "StringValue": customer_email
-               }
-           }
-       )
-       ```
-    3. **Routage par AWS SNS :** Amazon SNS compare `MessageAttributes.customer_email` avec la `FilterPolicy` de chaque abonné et n'envoie l'e-mail **qu'au client correspondant** (ainsi qu'à l'adresse `notification_email` de l'administrateur si elle est configurée sans filtre).
+1. **Topic SNS `order-confirmation` (Notification de Commande) :**
+   * Publié instantanément par la fonction Lambda dès la validation du panier.
+   * Notifie le client que sa commande a été prise en compte (statut `PENDING`).
+2. **Topic SNS `shipping-notification` (Notification d'Expédition) :**
+   * Publié par le Worker Batch EC2 Spot une fois le carton sélectionné et la facture PDF générée.
+   * Transmet au client son numéro de suivi transporteur (`TRK-EUW3-...`) et le lien d'accès à sa facture.
+3. **File d'Attente SQS `orders-batch-queue` (Tampon Asynchrone) :**
+   * File standard avec rétention de **14 jours** (`1 209 600 s`) et délai de visibilité de **120 secondes**.
+   * Découple entièrement la prise de commande du traitement batch : même si le Worker Spot est éteint ou interrompu par AWS, aucun message n'est perdu.
 
 ---
 
-## 2. Ce que déploie ce module
+## 2. Mécanisme de Routage E-mail Client (FilterPolicy)
 
-1. **Topic SNS `order-confirmation` (Modèle Pub/Sub) :**
-   * Déclenché instantanément par la fonction Lambda lorsqu'un client valide une commande.
-   * Envoie le premier e-mail de confirmation de réception de commande (expéditeur natif AWS : `no-reply@sns.amazonaws.com`).
-2. **Topic SNS `shipping-notification` (Modèle Pub/Sub) :**
-   * Déclenché par le Worker EC2 Spot une fois que le colisage (`Colis S/M/L/XL`) est calculé et que la facture PDF est générée.
-   * Envoie au client son **numéro de suivi transporteur** (`TRK-EUW3-...`) ainsi que le **lien de téléchargement de sa facture PDF**.
-3. **File d'attente SQS `orders-batch-queue` (Modèle File / Tampon) :**
-   * Accumule toutes les commandes validées par la Lambda au fil de la journée en attendant le réveil périodique (ou manuel) du Worker EC2 Spot.
-   * Conserve les messages jusqu'à **14 jours** (`message_retention_seconds = 1209600`). Même si aucune instance EC2 Spot ne tourne à l'instant T, **aucune commande n'est jamais perdue**.
+Dans un système Pub/Sub standard, tous les abonnés d'un topic reçoivent l'ensemble des messages. Pour garantir la confidentialité sans déployer de serveur SMTP ouvert, l'architecture utilise le filtrage natif SNS :
+
+1. **Souscription avec filtre :** Lors de l'enregistrement de l'e-mail du client, l'abonnement SNS est créé avec un attribut de filtrage :
+   ```json
+   { "customer_email": ["client@domaine.fr"] }
+   ```
+2. **Attribution des messages :** Chaque publication (par Lambda ou par le Worker Spot) inclut l'e-mail du client dans les métadonnées :
+   ```python
+   MessageAttributes = {
+       "customer_email": {"DataType": "String", "StringValue": customer_email}
+   }
+   ```
+3. **Distribution ciblée :** Amazon SNS évalue la règle côté AWS et ne délivre l'e-mail qu'au destinataire légitime.
 
 ---
 
-## 3. Pourquoi cette configuration est 100 % Gratuite (AWS Free Tier)
+## 3. Justification FinOps
 
-* **Amazon SNS (*Always Free*) :** 1 000 000 de publications gratuites et 1 000 notifications par e-mail gratuites chaque mois.
-* **Amazon SQS (*Always Free*) :** 1 000 000 de requêtes gratuites chaque mois.
-* **Remplacement FinOps de Kafka MSK :** Un cluster **Amazon MSK (Kafka)** n'a aucune offre Free Tier (~70 $ à 200 $/mois minimum). Le couple **SNS + SQS** remplit exactement ce rôle de bus événementiel et de file de streaming tampon pour **0,00 €**.
+* **Amazon SQS (*Always Free*) :** 1 000 000 de requêtes par mois gratuites à vie (le projet en consomme moins d'une centaine en phase de test).
+* **Amazon SNS (*Always Free*) :** 1 000 000 de publications et 1 000 e-mails par mois gratuits à vie.
+* **Alternative économique à Kafka (Amazon MSK) :** Amazon MSK nécessite au minimum 2 brokers managés (~70 $ à 150 $/mois, sans offre gratuite). Le couple SNS + SQS remplit le rôle d'ingestion et de streaming tampon avec une tolérance aux pannes équivalente pour **0,00 €**.
