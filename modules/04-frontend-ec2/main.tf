@@ -213,9 +213,15 @@ resource "aws_lb_listener" "front_http" {
   port              = 80
   protocol          = "HTTP"
 
+  # Bloque les accès directs à l'ALB : seul le trafic contenant le header secret CloudFront (règle prio 10) est forwardé
   default_action {
-    type             = "forward"
-    target_group_arn = aws_lb_target_group.front_tg[0].arn
+    type = "fixed-response"
+
+    fixed_response {
+      content_type = "text/plain"
+      message_body = "Acces direct interdit : veuillez passer par le CDN CloudFront."
+      status_code  = "403"
+    }
   }
 }
 
@@ -289,7 +295,13 @@ resource "aws_autoscaling_policy" "cpu_target_tracking" {
 # ------------------------------------------------------------------------------
 # 5. DISTRIBUTION CLOUDFRONT (CDN Edge + HTTPS)
 # ------------------------------------------------------------------------------
+moved {
+  from = aws_cloudfront_distribution.front_cdn
+  to   = aws_cloudfront_distribution.front_cdn[0]
+}
+
 resource "aws_cloudfront_distribution" "front_cdn" {
+  count               = var.enable_autoscaling_alb ? 1 : 0
   enabled             = true
   is_ipv6_enabled     = true
   comment             = "CDN CloudShop pour le Load Balancer"

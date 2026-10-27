@@ -25,16 +25,15 @@ Ce module déploie la couche de présentation de la boutique, son API applicativ
 
 | Route HTTP | Méthode | Rôle & Intégration AWS |
 | :--- | :--- | :--- |
-| `/` | `GET` | Interface web responsive de la boutique (catalogue, panier, suivi et console admin). |
+| `/` | `GET` | Interface web responsive de la boutique (catalogue, authentification SDK Cognito, panier, suivi et console admin). |
 | `/api/products` | `GET` | Lecture en temps réel des références dans la table DynamoDB `products`. |
-| `/api/register` | `POST` | Inscription d'un nouveau client via Amazon Cognito (`SignUp`). |
-| `/api/confirm` | `POST` | Validation du compte client avec le code e-mail Cognito (`ConfirmSignUp`). |
-| `/api/login` | `POST` | Authentification et obtention des jetons JWT via Cognito (`InitiateAuth`). |
-| `/api/order` | `POST` | Transmission de la commande à la fonction AWS Lambda `cloudshop-create-order`. |
+| `/api/subscribe` | `POST` | Abonnement automatique de l'e-mail client au Topic SNS avec `FilterPolicy` dédiée lors de l'inscription Cognito. |
+| `/api/order` | `POST` | Transmission de la commande (avec jeton JWT Cognito) à la fonction AWS Lambda `cloudshop-create-order`. |
 | `/api/orders` | `GET` | Consultation de l'historique et du statut des commandes dans DynamoDB. |
 | `/api/invoice` | `GET` | Streaming sécurisé du fichier PDF depuis Amazon S3 (`Content-Type: application/pdf`). |
 | `/api/spot-status`| `GET` | Suivi en temps réel de la file SQS et du statut des instances Worker Spot. |
-| `/api/launch-spot`| `POST` | Lancement manuel d'une instance Worker Spot via le Launch Template. |
+| `/api/launch-spot`| `POST` | Lancement manuel d'une instance Worker Spot via le Launch Template (avec fallback automatique On-Demand). |
+| `/health` | `GET` | Point de contrôle de santé utilisé par le Target Group de l'Application Load Balancer. |
 
 ---
 

@@ -63,7 +63,7 @@ resource "aws_iam_role_policy" "spot_worker_policy" {
       },
       {
         Effect   = "Allow"
-        Action   = ["ec2:DescribeInstances"]
+        Action   = ["ec2:DescribeInstances", "elbv2:DescribeLoadBalancers", "cloudfront:ListDistributions", "autoscaling:SetDesiredCapacity"]
         Resource = "*"
       }
     ]
@@ -151,9 +151,27 @@ resource "aws_autoscaling_group" "spot_periodic_asg" {
   max_size            = 1
   vpc_zone_identifier = [var.subnet_id]
 
-  launch_template {
-    id      = aws_launch_template.spot_worker_lt.id
-    version = "$Latest"
+  mixed_instances_policy {
+    instances_distribution {
+      on_demand_base_capacity                  = 0
+      on_demand_percentage_above_base_capacity = 0
+      spot_allocation_strategy                 = "price-capacity-optimized"
+    }
+
+    launch_template {
+      launch_template_specification {
+        launch_template_id = aws_launch_template.spot_worker_lt.id
+        version            = "$Latest"
+      }
+
+      override {
+        instance_type = "t3.micro"
+      }
+
+      override {
+        instance_type = "t3.small"
+      }
+    }
   }
 }
 
@@ -162,6 +180,15 @@ resource "aws_autoscaling_schedule" "nightly_batch_start" {
   min_size               = 0
   max_size               = 1
   desired_capacity       = 1
-  recurrence             = "0 2 * * *" # Tous les jours à 02h00 du matin
+  recurrence             = "0 2 * * *" # Tous les jours à 02h00 UTC
+  autoscaling_group_name = aws_autoscaling_group.spot_periodic_asg.name
+}
+
+resource "aws_autoscaling_schedule" "nightly_batch_stop_safety" {
+  scheduled_action_name  = "${var.project_name}-nightly-02h30-scale-to-zero"
+  min_size               = 0
+  max_size               = 1
+  desired_capacity       = 0
+  recurrence             = "30 2 * * *" # Sécurité : garantit le retour à 0 après la fenêtre batch
   autoscaling_group_name = aws_autoscaling_group.spot_periodic_asg.name
 }

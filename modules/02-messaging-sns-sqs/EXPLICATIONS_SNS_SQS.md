@@ -6,12 +6,11 @@ Ce module implémente le bus d'événements et la file tampon garantissant le d�
 
 ## 1. Composants Déployés
 
-1. **Topic SNS `order-confirmation` (Notification de Commande) :**
-   * Publié instantanément par la fonction Lambda dès la validation du panier.
-   * Notifie le client que sa commande a été prise en compte (statut `PENDING`).
-2. **Topic SNS `shipping-notification` (Notification d'Expédition) :**
-   * Publié par le Worker Batch EC2 Spot une fois le carton sélectionné et la facture PDF générée.
-   * Transmet au client son numéro de suivi transporteur (`TRK-EUW3-...`) et le lien d'accès à sa facture.
+1. **Topic SNS `order-confirmation` (Notifications Client Ciblées) :**
+   * Canal principal auquel chaque client s'abonne lors de son inscription (un seul clic de confirmation *Confirm subscription* requis côté client).
+   * Publié instantanément par la fonction Lambda dès la validation du panier (statut `PENDING`), puis par le Worker Batch EC2 Spot lors de l'expédition (`SHIPPED` + numéro de suivi `TRK-EUW3-...` + lien direct vers la facture PDF).
+2. **Topic SNS `shipping-notification` (Canal Logistique Dédié) :**
+   * Topic additionnel disponible pour dissocier les flux logistiques/supervision des notifications d'achat.
 3. **File d'Attente SQS `orders-batch-queue` (Tampon Asynchrone) :**
    * File standard avec rétention de **14 jours** (`1 209 600 s`) et délai de visibilité de **120 secondes**.
    * Découple entièrement la prise de commande du traitement batch : même si le Worker Spot est éteint ou interrompu par AWS, aucun message n'est perdu.

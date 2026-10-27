@@ -1,5 +1,5 @@
 output "website_url" {
-  value = var.enable_autoscaling_alb ? "https://${aws_cloudfront_distribution.front_cdn.domain_name}" : "http://${aws_instance.web_front_single[0].public_ip}"
+  value = var.enable_autoscaling_alb ? "https://${aws_cloudfront_distribution.front_cdn[0].domain_name}" : "http://${aws_instance.web_front_single[0].public_ip}"
 }
 
 output "front_instance_id" {

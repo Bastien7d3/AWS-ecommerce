@@ -30,6 +30,6 @@ resource "aws_sns_topic_subscription" "email_shipping_notify" {
 # 3. File d'attente SQS : Tampon résilient entre la Lambda et le Worker EC2 Spot
 resource "aws_sqs_queue" "orders_batch" {
   name                       = "${var.project_name}-orders-batch-queue"
-  visibility_timeout_seconds = 60
+  visibility_timeout_seconds = 120
   message_retention_seconds  = 1209600 # 14 jours de rétention maximale en cas d'arrêt du batch
 }

@@ -1,13 +1,13 @@
 # ==============================================================================
 # ORCHESTRATION GLOBALE DU PROJET CLOUDSHOP AWS (FISA 2026)
-# Fichier racine unique reliant les 5 modules dans ./modules/ :
-#   01-database-dynamodb <-> 02-messaging-sns-sqs <-> 03-serverless-lambda
-#   <-> 04-frontend-ec2 <-> 05-batch-ec2-spot
+# Fichier racine unique reliant les 6 modules dans ./modules/ :
+#   00-auth-cognito <-> 01-database-dynamodb <-> 02-messaging-sns-sqs
+#   <-> 03-serverless-lambda <-> 04-frontend-ec2 <-> 05-batch-ec2-spot
 # ==============================================================================
 
 terraform {
   required_version = ">= 1.5.0"
-  # à suppr à la fin
+  # Backend S3 partagé pour le travail en groupe (à commenter pour un test local autonome sur un autre compte AWS)
   backend "s3" {
     bucket         = "cloudshop-tfstate-fisa2026-unique"
     key            = "global/s3/terraform.tfstate"

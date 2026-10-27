@@ -196,7 +196,18 @@ def get_instance_id():
         return "ec2-spot-worker"
 
 
-def get_front_public_ip():
+def get_front_public_url():
+    # 1. Priorite au CDN HTTPS CloudFront s'il est deploye
+    try:
+        cf = boto3.client("cloudfront", region_name=REGION)
+        dists = cf.list_distributions().get("DistributionList", {}).get("Items", [])
+        for d in dists:
+            if d.get("Enabled") and ("CloudShop" in d.get("Comment", "") or "alb" in json.dumps(d.get("Origins", {})).lower()):
+                return f"https://{d['DomainName']}"
+    except Exception:
+        pass
+
+    # 2. Sinon instance EC2 Front-End directe (Mode mono-instance)
     try:
         ec2 = boto3.client("ec2", region_name=REGION)
         res = ec2.describe_instances(
@@ -208,7 +219,7 @@ def get_front_public_ip():
         for r in res.get("Reservations", []):
             for inst in r.get("Instances", []):
                 if inst.get("PublicIpAddress"):
-                    return inst["PublicIpAddress"]
+                    return f"http://{inst['PublicIpAddress']}"
     except Exception:
         pass
     return None
@@ -225,7 +236,7 @@ def main():
     ddb = boto3.resource("dynamodb", region_name=REGION).Table(DDB_ORDERS_TABLE)
     sns = boto3.client("sns", region_name=REGION)
     instance_id = get_instance_id()
-    front_ip = get_front_public_ip()
+    front_url = get_front_public_url()
 
     print(f"[Spot Worker {instance_id}] Demarrage du batch a la demande sur {SQS_QUEUE_URL}...")
 
@@ -259,8 +270,8 @@ def main():
             s3_key = f"invoices/facture_{order_id}.pdf"
             s3.upload_file(local_pdf, S3_BUCKET, s3_key, ExtraArgs={"ContentType": "application/pdf"})
 
-            if front_ip:
-                invoice_link = f"http://{front_ip}/api/invoice?key={urllib.parse.quote(s3_key)}"
+            if front_url:
+                invoice_link = f"{front_url}/api/invoice?key={urllib.parse.quote(s3_key)}"
             else:
                 invoice_link = s3.generate_presigned_url(
                     "get_object",
@@ -318,7 +329,16 @@ def main():
             processed_count += 1
             print(f"[Spot Worker] Commande {order_id} -> SHIPPED ({tracking_number})")
 
-    print(f"[Spot Worker {instance_id}] File SQS vide ({processed_count} commandes traitees). Auto-extinction de l'instance Spot...")
+    print(f"[Spot Worker {instance_id}] File SQS vide ({processed_count} commandes traitees). Remise a zero de l'ASG et auto-extinction...")
+    try:
+        asg = boto3.client("autoscaling", region_name=REGION)
+        asg.set_desired_capacity(
+            AutoScalingGroupName="cloudshop-spot-periodic-asg",
+            DesiredCapacity=0,
+            HonorCooldown=False,
+        )
+    except Exception as e:
+        print(f"[Spot Worker] Info ASG scale-to-zero: {e}")
     os.system("sudo shutdown -h now || shutdown -h now")
 
 

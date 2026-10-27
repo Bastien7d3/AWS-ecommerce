@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 import boto3
+from botocore.exceptions import ClientError
 
 REGION = os.environ["AWS_REGION_TARGET"]
 PRODUCTS_TABLE = os.environ["PRODUCTS_TABLE"]
@@ -36,17 +37,26 @@ def lambda_handler(event, context):
     prod_resp = products_tbl.get_item(Key={"product_id": product_id})
     product = prod_resp.get("Item")
     if not product:
-        return {"status": "ERROR", "message": f"Produit {product_id} introuvable"}
+        msg = f"Produit {product_id} introuvable"
+        return {"status": "ERROR", "error": msg, "message": msg}
 
     current_stock = int(product.get("stock", 0))
     if current_stock < qty:
-        return {"status": "ERROR", "message": f"Stock insuffisant ({current_stock} restant)"}
+        msg = f"Stock insuffisant ({current_stock} restant)"
+        return {"status": "ERROR", "error": msg, "message": msg}
 
-    products_tbl.update_item(
-        Key={"product_id": product_id},
-        UpdateExpression="SET stock = stock - :q",
-        ExpressionAttributeValues={":q": Decimal(str(qty))},
-    )
+    try:
+        products_tbl.update_item(
+            Key={"product_id": product_id},
+            UpdateExpression="SET stock = stock - :q",
+            ConditionExpression="stock >= :q",
+            ExpressionAttributeValues={":q": Decimal(str(qty))},
+        )
+    except ClientError as e:
+        if e.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+            msg = f"Stock insuffisant pour {product_id} (conflit concurrent)"
+            return {"status": "ERROR", "error": msg, "message": msg}
+        raise
 
     order_id = f"CMD-2026-{uuid.uuid4().hex[:6].upper()}"
     created_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
