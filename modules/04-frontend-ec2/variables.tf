@@ -50,6 +50,30 @@ variable "lambda_function_arn" {
   type = string
 }
 
+variable "order_confirmation_topic_arn" {
+  type = string
+}
+
+variable "shipping_notification_topic_arn" {
+  type = string
+}
+
+variable "orders_batch_queue_url" {
+  type = string
+}
+
+variable "orders_batch_queue_arn" {
+  type = string
+}
+
+variable "spot_launch_template_id" {
+  type = string
+}
+
+variable "spot_worker_role_arn" {
+  type = string
+}
+
 variable "enable_autoscaling_alb" {
   description = "Active l'Application Load Balancer Multi-AZ et l'Auto Scaling Group (1 à 4 instances)"
   type        = bool

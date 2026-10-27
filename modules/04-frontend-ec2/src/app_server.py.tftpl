@@ -11,6 +11,10 @@ PRODUCTS_TABLE = "${products_table}"
 ORDERS_TABLE = "${orders_table}"
 INVOICES_BUCKET = "${invoices_bucket}"
 LAMBDA_NAME = "${lambda_name}"
+SNS_CONFIRM_ARN = "${sns_confirm_arn}"
+SNS_SHIP_ARN = "${sns_ship_arn}"
+SQS_QUEUE_URL = "${sqs_queue_url}"
+SPOT_LT_ID = "${spot_lt_id}"
 
 
 class DecimalEncoder(json.JSONEncoder):
@@ -58,23 +62,27 @@ HTML_PAGE = """<!DOCTYPE html>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); padding-bottom: 3rem; }
     header { background: var(--navy); color: white; padding: 1.4rem 2rem; border-bottom: 4px solid var(--orange); }
-    .wrap { max-width: 1080px; margin: 0 auto; }
+    .wrap { max-width: 1120px; margin: 0 auto; }
     .badge { background: var(--orange); color: #111; font-size: 0.78rem; font-weight: 700; padding: 0.2rem 0.6rem; border-radius: 99px; display: inline-block; margin-bottom: 0.4rem; }
     h1 { font-size: 1.6rem; }
     .meta { color: #cbd5e1; font-size: 0.9rem; margin-top: 0.2rem; }
-    .container { max-width: 1080px; margin: 1.8rem auto; padding: 0 1rem; }
-    .card { background: var(--card); border-radius: 10px; padding: 1.4rem; border: 1px solid #e2e8f0; margin-bottom: 1.5rem; box-shadow: 0 2px 4px rgba(0,0,0,0.04); }
-    h2 { font-size: 1.2rem; color: var(--navy); margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center; }
+    .container { max-width: 1120px; margin: 1.6rem auto; padding: 0 1rem; }
+    .card { background: var(--card); border-radius: 10px; padding: 1.4rem; border: 1px solid #e2e8f0; margin-bottom: 1.4rem; box-shadow: 0 2px 4px rgba(0,0,0,0.04); }
+    .card-spot { border: 2px solid #0284c7; background: #f0f9ff; }
+    h2 { font-size: 1.18rem; color: var(--navy); margin-bottom: 0.8rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem; }
     .products-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; }
     .prod-box { border: 1px solid #cbd5e1; border-radius: 8px; padding: 1rem; background: #fcfcfd; display: flex; flex-direction: column; justify-content: space-between; }
     .prod-title { font-weight: 700; font-size: 1.05rem; margin-bottom: 0.4rem; }
     .prod-meta { font-size: 0.86rem; color: var(--muted); margin-bottom: 0.8rem; }
     .price { font-size: 1.25rem; font-weight: 800; color: var(--navy); }
+    input[type="email"], input[type="text"] { padding: 0.55rem 0.8rem; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 0.92rem; width: 270px; }
     button { background: var(--orange); color: #111; border: none; font-weight: 700; padding: 0.6rem 1.1rem; border-radius: 6px; cursor: pointer; font-size: 0.92rem; }
     button:hover { background: #e68a00; }
     button:disabled { opacity: 0.5; cursor: not-allowed; }
     .btn-secondary { background: var(--navy); color: white; font-size: 0.85rem; padding: 0.45rem 0.9rem; }
-    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; margin-top: 0.5rem; }
+    .btn-spot { background: #0284c7; color: white; padding: 0.7rem 1.3rem; }
+    .btn-spot:hover { background: #0369a1; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; margin-top: 0.5rem; background: white; }
     th, td { border: 1px solid #e2e8f0; padding: 0.65rem 0.75rem; text-align: left; }
     th { background: #f1f5f9; color: var(--navy); }
     .tag-pending { background: #fef3c7; color: #b45309; padding: 0.2rem 0.55rem; border-radius: 99px; font-weight: 700; font-size: 0.78rem; }
@@ -87,35 +95,64 @@ HTML_PAGE = """<!DOCTYPE html>
 <body>
   <header>
     <div class="wrap">
-      <span class="badge">Projet AWS FISA 2026 — Architecture Complète Connectée</span>
-      <h1>CloudShop AWS — Catalogue, Commandes Serverless & Batch EC2 Spot</h1>
-      <p class="meta">Serveur Front-End EC2 : <strong>""" + INSTANCE_ID + """</strong> | Région : <strong>""" + REGION + """</strong> | Lambda : <strong>""" + LAMBDA_NAME + """</strong></p>
+      <span class="badge">Projet AWS FISA 2026 — Architecture Modulaire Connectée</span>
+      <h1>CloudShop AWS — Boutique, Notifications SNS & Batch EC2 Spot à la demande</h1>
+      <p class="meta">Serveur Front-End EC2 : <strong>""" + INSTANCE_ID + """</strong> | Région : <strong>""" + REGION + """</strong> | Launch Template Spot : <strong>""" + SPOT_LT_ID + """</strong></p>
     </div>
   </header>
 
   <div class="container">
     <div id="toast"></div>
 
+    <!-- 1. IDENTIFICATION CLIENT & ABONNEMENT EMAIL SNS -->
+    <div class="card">
+      <h2><span>1. Coordonnées Client & Réception des E-mails (Amazon SNS + FilterPolicy)</span></h2>
+      <p style="font-size: 0.88rem; color: var(--muted); margin-bottom: 0.8rem;">
+        <strong>Comment SNS sait à qui envoyer le mail ?</strong> Amazon SNS fonctionne par abonnement (<em>Topic Subscription</em>) avec une politique de filtrage (<code>FilterPolicy: {"customer_email": ["..."]}</code>). Saisissez votre e-mail ci-dessous : si c'est la première fois, cliquez sur <em>"S'abonner aux notifications SNS"</em> et validez le lien reçu par mail d'AWS (<code>no-reply@sns.amazonaws.com</code>).
+      </p>
+      <div style="display:flex; gap:0.7rem; align-items:center; flex-wrap:wrap;">
+        <input type="text" id="customer-name" value="Bastien" placeholder="Nom du client" style="width:180px;">
+        <input type="email" id="customer-email" placeholder="votre.email@domaine.fr">
+        <button class="btn-secondary" onclick="subscribeEmail(this)">📧 S'abonner aux notifications SNS</button>
+      </div>
+    </div>
+
+    <!-- 2. CATALOGUE PRODUITS & PRISE DE COMMANDE LAMBDA -->
     <div class="card">
       <h2>
-        <span>1. Catalogue Produits (Table DynamoDB : <code>""" + PRODUCTS_TABLE + """</code>)</span>
+        <span>2. Catalogue Produits (DynamoDB : <code>""" + PRODUCTS_TABLE + """</code>)</span>
         <button class="btn-secondary" onclick="loadAll()">Rafraîchir</button>
       </h2>
       <div id="products-list" class="products-grid">Chargement du catalogue...</div>
     </div>
 
+    <!-- 3. PANNEAU ADMIN : LANCEMENT MANUEL / PERIODIQUE DU WORKER EC2 SPOT -->
+    <div class="card card-spot">
+      <h2>
+        <span>3. Console Administrateur : Worker Batch EC2 Spot (Périodique 02h00 ou Lancement Manuel)</span>
+        <button class="btn-spot" id="btn-launch-spot" onclick="launchSpotWorker(this)">
+          🚀 Créer & Lancer une Instance EC2 Spot maintenant
+        </button>
+      </h2>
+      <p style="font-size: 0.88rem; color: #0c4a6e; margin-bottom: 0.8rem;">
+        Au repos, <strong>0 instance EC2 Spot ne tourne (0,00 €)</strong> : les commandes s'accumulent dans la file SQS au statut <code>PENDING</code>. Le batch se lance soit automatiquement la nuit à <strong>02h00 UTC</strong>, soit à la demande en cliquant sur le bouton bleu ci-dessus : AWS crée alors une instance EC2 Spot qui dépile SQS, calcule les cartons (<code>S/M/L/XL</code>), génère les factures PDF sur S3, envoie les numéros de suivi via SNS, puis <strong>s'auto-détruit automatiquement (<code>terminated</code>) dès que la file est vide</strong> !
+      </p>
+      <div id="spot-status-bar" style="font-size:0.92rem; background:white; padding:0.75rem 1rem; border-radius:6px; border:1px solid #bae6fd;">
+        Chargement de l'état de la file SQS et des instances Spot...
+      </div>
+    </div>
+
+    <!-- 4. TABLEAU DE SUIVI DES COMMANDES & FACTURES PDF -->
     <div class="card">
       <h2>
-        <span>2. Suivi des Commandes, Colisage & Factures PDF (DynamoDB + SQS + EC2 Spot + S3)</span>
-        <button class="btn-secondary" onclick="loadOrders()">Actualiser les statuts</button>
+        <span>4. Suivi des Commandes, Colisage & Factures PDF (DynamoDB + S3)</span>
+        <button class="btn-secondary" onclick="loadAll()">Actualiser</button>
       </h2>
-      <p style="font-size: 0.88rem; color: var(--muted); margin-bottom: 0.8rem;">
-        Lorsqu'une commande est passée, la <strong>Lambda</strong> l'enregistre au statut <code>PENDING</code>, envoie un mail <strong>SNS</strong> et la place dans <strong>SQS</strong>. Le <strong>Worker EC2 Spot</strong> dépile automatiquement la file SQS toutes les quelques secondes, calcule le carton transporteur (<code>S, M, L, XL</code>), génère la <strong>facture PDF sur S3</strong> et passe le statut à <code>SHIPPED</code> avec son numéro de suivi.
-      </p>
       <table>
         <thead>
           <tr>
             <th>N° Commande</th>
+            <th>Client & E-mail</th>
             <th>Article commandé</th>
             <th>Statut</th>
             <th>Colis Transporteur (EC2 Spot)</th>
@@ -124,13 +161,61 @@ HTML_PAGE = """<!DOCTYPE html>
           </tr>
         </thead>
         <tbody id="orders-body">
-          <tr><td colspan="6">Chargement des commandes...</td></tr>
+          <tr><td colspan="7">Chargement des commandes...</td></tr>
         </tbody>
       </table>
     </div>
   </div>
 
   <script>
+    function showToast(msg) {
+      const toast = document.getElementById('toast');
+      toast.style.display = 'block';
+      toast.textContent = msg;
+    }
+
+    async function subscribeEmail(btn) {
+      const email = document.getElementById('customer-email').value.trim();
+      if (!email) { alert('Veuillez saisir une adresse e-mail.'); return; }
+      btn.disabled = true;
+      try {
+        const res = await fetch('/api/subscribe', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ email })
+        });
+        const data = await res.json();
+        showToast(data.message || 'Abonnement SNS créé ! Vérifiez votre boîte mail pour confirmer.');
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function launchSpotWorker(btn) {
+      btn.disabled = true;
+      const oldText = btn.textContent;
+      btn.textContent = '⏳ Création de l instance EC2 Spot...';
+      try {
+        const res = await fetch('/api/launch-spot', { method: 'POST' });
+        const data = await res.json();
+        showToast(`🚀 Instance EC2 Spot $${data.instance_id} créée à la demande ! Elle démarre, traite la file SQS, génère les PDF et s'auto-détruira.`);
+        await loadSpotStatus();
+      } finally {
+        btn.disabled = false;
+        btn.textContent = oldText;
+      }
+    }
+
+    async function loadSpotStatus() {
+      const res = await fetch('/api/spot-status');
+      const data = await res.json();
+      const bar = document.getElementById('spot-status-bar');
+      const instancesHtml = data.spot_instances.length
+        ? data.spot_instances.map(i => `<code>$${i.id}</code> (<strong>$${i.state}</strong>)`).join(' · ')
+        : '<strong>Aucune instance active (0,00 €/h au repos)</strong>';
+      bar.innerHTML = `📦 <strong>Commandes en attente dans SQS :</strong> <strong>$${data.sqs_pending}</strong> &nbsp;|&nbsp; 🖥️ <strong>Instances EC2 Spot récentes :</strong> $${instancesHtml}`;
+    }
+
     async function loadProducts() {
       const res = await fetch('/api/products');
       const items = await res.json();
@@ -160,17 +245,18 @@ HTML_PAGE = """<!DOCTYPE html>
       const orders = await res.json();
       const tbody = document.getElementById('orders-body');
       if (!orders.length) {
-        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#64748b;">Aucune commande pour le moment. Cliquez sur "Commander" ci-dessus !</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#64748b;">Aucune commande pour le moment.</td></tr>';
         return;
       }
       tbody.innerHTML = orders.map(o => `
         <tr>
           <td><strong>$${o.order_id}</strong><br><span style="font-size:0.78rem;color:#64748b;">$${o.created_at || ''}</span></td>
+          <td>$${o.customer_name || '-'}<br><small style="color:#64748b;">$${o.customer_email || ''}</small></td>
           <td>$${o.product_summary || '-'}</td>
           <td><span class="$${o.status === 'SHIPPED' ? 'tag-shipped' : 'tag-pending'}">$${o.status}</span></td>
-          <td>$${o.carrier_box ? `$${o.carrier_box}<br><small>$${o.box_dimensions || ''} ($${o.fill_rate_percent || 0}% rempli)</small>` : '<em>En attente du batch EC2 Spot...</em>'}</td>
-          <td><code>$${o.tracking_number || 'En cours...'}</code></td>
-          <td>$${o.pdf_url ? `<a class="pdf-link" href="$${o.pdf_url}" target="_blank">📄 Ouvrir la Facture PDF</a>` : '<em>Génération en cours...</em>'}</td>
+          <td>$${o.carrier_box ? `$${o.carrier_box}<br><small>$${o.box_dimensions || ''} ($${o.fill_rate_percent || 0}% rempli)</small>` : '<em>En attente du lancement Spot...</em>'}</td>
+          <td><code>$${o.tracking_number || 'En attente...'}</code></td>
+          <td>$${o.pdf_url ? `<a class="pdf-link" href="$${o.pdf_url}" target="_blank">📄 Ouvrir la Facture PDF</a>` : '<em>En attente du batch Spot...</em>'}</td>
         </tr>
       `).join('');
     }
@@ -180,15 +266,15 @@ HTML_PAGE = """<!DOCTYPE html>
       const oldText = btn.textContent;
       btn.textContent = 'Appel Lambda...';
       try {
+        const customer_name = document.getElementById('customer-name').value.trim() || 'Client CloudShop';
+        const customer_email = document.getElementById('customer-email').value.trim();
         const res = await fetch('/api/order', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({ product_id: productId, qty: 1 })
+          body: JSON.stringify({ product_id: productId, qty: 1, customer_name, customer_email })
         });
         const data = await res.json();
-        const toast = document.getElementById('toast');
-        toast.style.display = 'block';
-        toast.textContent = `✅ Commande $${data.order_id} créée via AWS Lambda ! Traitement par le Worker EC2 Spot en cours...`;
+        showToast(`✅ Commande $${data.order_id} enregistrée (statut PENDING) et placée dans SQS ! Cliquez sur "Créer & Lancer une Instance EC2 Spot" pour traiter le lot.`);
         await loadAll();
       } finally {
         btn.disabled = false;
@@ -197,11 +283,11 @@ HTML_PAGE = """<!DOCTYPE html>
     }
 
     async function loadAll() {
-      await Promise.all([loadProducts(), loadOrders()]);
+      await Promise.all([loadProducts(), loadOrders(), loadSpotStatus()]);
     }
 
     loadAll();
-    setInterval(loadOrders, 5000);
+    setInterval(() => { loadOrders(); loadSpotStatus(); }, 5000);
   </script>
 </body>
 </html>
@@ -239,6 +325,26 @@ class ShopHandler(BaseHTTPRequestHandler):
                         ExpiresIn=3600,
                     )
             self._send_json(200, orders)
+        elif self.path == "/api/spot-status":
+            sqs = boto3.client("sqs", region_name=REGION)
+            ec2 = boto3.client("ec2", region_name=REGION)
+            attrs = sqs.get_queue_attributes(
+                QueueUrl=SQS_QUEUE_URL,
+                AttributeNames=["ApproximateNumberOfMessages", "ApproximateNumberOfMessagesNotVisible"],
+            ).get("Attributes", {})
+            pending = int(attrs.get("ApproximateNumberOfMessages", 0)) + int(attrs.get("ApproximateNumberOfMessagesNotVisible", 0))
+
+            res = ec2.describe_instances(
+                Filters=[{"Name": "tag:Role", "Values": ["spot-batch-worker"]}]
+            )
+            instances = []
+            for r in res.get("Reservations", []):
+                for inst in r.get("Instances", []):
+                    instances.append({
+                        "id": inst["InstanceId"],
+                        "state": inst["State"]["Name"],
+                    })
+            self._send_json(200, {"sqs_pending": pending, "spot_instances": instances})
         elif self.path == "/health":
             self._send_json(200, {"status": "healthy", "instance": INSTANCE_ID})
         else:
@@ -246,9 +352,10 @@ class ShopHandler(BaseHTTPRequestHandler):
             self.end_headers()
 
     def do_POST(self):
+        length = int(self.headers.get("Content-Length", 0))
+        body = json.loads(self.rfile.read(length).decode("utf-8")) if length > 0 else {}
+
         if self.path == "/api/order":
-            length = int(self.headers.get("Content-Length", 0))
-            body = json.loads(self.rfile.read(length).decode("utf-8")) if length > 0 else {}
             lmb = boto3.client("lambda", region_name=REGION)
             resp = lmb.invoke(
                 FunctionName=LAMBDA_NAME,
@@ -257,6 +364,30 @@ class ShopHandler(BaseHTTPRequestHandler):
             )
             result = json.loads(resp["Payload"].read().decode("utf-8"))
             self._send_json(200, result)
+        elif self.path == "/api/subscribe":
+            email = body.get("email", "").strip()
+            sns = boto3.client("sns", region_name=REGION)
+            filter_policy = json.dumps({"customer_email": [email]})
+            for topic_arn in (SNS_CONFIRM_ARN, SNS_SHIP_ARN):
+                sns.subscribe(
+                    TopicArn=topic_arn,
+                    Protocol="email",
+                    Endpoint=email,
+                    Attributes={"FilterPolicy": filter_policy},
+                )
+            self._send_json(200, {
+                "status": "SUBSCRIBED",
+                "message": f"Abonnement SNS (avec FilterPolicy sur {email}) envoyé ! Cliquez sur 'Confirm subscription' dans votre boîte mail.",
+            })
+        elif self.path == "/api/launch-spot":
+            ec2 = boto3.client("ec2", region_name=REGION)
+            run_resp = ec2.run_instances(
+                LaunchTemplate={"LaunchTemplateId": SPOT_LT_ID, "Version": "$Latest"},
+                MinCount=1,
+                MaxCount=1,
+            )
+            inst_id = run_resp["Instances"][0]["InstanceId"]
+            self._send_json(200, {"status": "LAUNCHED", "instance_id": inst_id})
         else:
             self.send_response(404)
             self.end_headers()

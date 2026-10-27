@@ -1,15 +1,21 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Worker Batch EC2 Spot - CloudShop FISA 2026
-Connecte a :
-- Amazon SQS (depile les commandes creees par la Lambda)
-- Amazon S3 (genere et stocke les factures PDF + rapports d'audit JSON)
-- Amazon DynamoDB (passe le statut de PENDING a PACKAGED puis SHIPPED)
-- Amazon SNS (envoie le numero de suivi transporteur et le lien PDF au client)
+Worker Batch EC2 Spot A La Demande / Periodique - CloudShop FISA 2026
+Fonctionnement :
+1. L'instance EC2 Spot est creee a la demande (par l'Admin ou par le Cron periodique EventBridge).
+2. Au demarrage, elle depile TOUTES les commandes en attente dans la file SQS.
+3. Pour chaque commande :
+   - Calcule le carton transporteur optimal (S, M, L, XL)
+   - Genere la facture PDF officielle (fpdf2) et l'archive sur Amazon S3
+   - Met a jour la commande au statut SHIPPED dans DynamoDB
+   - Envoie le mail SNS d'expedition avec le Numero de Suivi (filtre sur l'email du client)
+4. Une fois la file SQS vide, l'instance Spot s'auto-detruit (shutdown -h now -> terminated)
+   pour garantir un cout de 0,00 EUR au repos !
 """
 
 import json
+import os
 import time
 import uuid
 import urllib.request
@@ -76,7 +82,7 @@ class InvoicePDF(FPDF):
         self.cell(120, 10, "CLOUDSHOP AWS - FACTURE & COLISAGE", border=0)
         self.set_font("Helvetica", "", 10)
         self.set_xy(12, 18)
-        self.cell(120, 8, "Projet FISA 2026 - Genere par Worker Batch EC2 Spot (eu-west-3)", border=0)
+        self.cell(120, 8, "Projet FISA 2026 - Genere par Worker Batch EC2 Spot Ephemere", border=0)
         self.ln(22)
 
     def footer(self):
@@ -96,7 +102,7 @@ def generate_invoice_pdf(order, packing_info, tracking_number, instance_id, outp
     pdf.cell(90, 8, f"Date : {datetime.now(timezone.utc).strftime('%d/%m/%Y %H:%M UTC')}", ln=True, align="R")
 
     pdf.set_font("Helvetica", "", 10)
-    pdf.cell(100, 6, f"Client : {order.get('customer_name', 'Client CloudShop')}")
+    pdf.cell(100, 6, f"Client : {order.get('customer_name', 'Client CloudShop')} ({order.get('customer_email', 'N/A')})")
     pdf.cell(90, 6, f"Instance EC2 Spot : {instance_id}", ln=True, align="R")
     pdf.cell(100, 6, f"Destination : {order.get('shipping_address', 'Paris, France')}", ln=True)
     pdf.ln(6)
@@ -194,79 +200,92 @@ def main():
     sns = boto3.client("sns", region_name=REGION)
     instance_id = get_instance_id()
 
-    print(f"[Spot Worker {instance_id}] En ecoute de la file SQS {SQS_QUEUE_URL}...")
+    print(f"[Spot Worker {instance_id}] Demarrage du batch a la demande sur {SQS_QUEUE_URL}...")
 
-    while True:
-        try:
-            resp = sqs.receive_message(
-                QueueUrl=SQS_QUEUE_URL,
-                MaxNumberOfMessages=5,
-                WaitTimeSeconds=10,
+    processed_count = 0
+    empty_polls = 0
+
+    # Lit toute la file SQS jusqu'a ce qu'elle soit vide (2 lectures vides consecutives), puis s'eteint !
+    while empty_polls < 2:
+        resp = sqs.receive_message(
+            QueueUrl=SQS_QUEUE_URL,
+            MaxNumberOfMessages=10,
+            WaitTimeSeconds=5,
+        )
+        messages = resp.get("Messages", [])
+        if not messages:
+            empty_polls += 1
+            continue
+
+        empty_polls = 0
+        for msg in messages:
+            order = json.loads(msg["Body"])
+            order_id = order["order_id"]
+            customer_email = order.get("customer_email", "")
+
+            packing = select_carrier_box(order.get("items", []))
+            tracking_number = f"TRK-EUW3-2026-{uuid.uuid4().hex[:6].upper()}"
+
+            local_pdf = f"/tmp/facture_{order_id}.pdf"
+            total_ttc = generate_invoice_pdf(order, packing, tracking_number, instance_id, local_pdf)
+
+            s3_key = f"invoices/facture_{order_id}.pdf"
+            s3.upload_file(local_pdf, S3_BUCKET, s3_key, ExtraArgs={"ContentType": "application/pdf"})
+
+            presigned_url = s3.generate_presigned_url(
+                "get_object",
+                Params={"Bucket": S3_BUCKET, "Key": s3_key},
+                ExpiresIn=86400,
             )
-            messages = resp.get("Messages", [])
-            if not messages:
-                continue
 
-            for msg in messages:
-                order = json.loads(msg["Body"])
-                order_id = order["order_id"]
+            processed_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+            ddb.update_item(
+                Key={"order_id": order_id},
+                UpdateExpression=(
+                    "SET #s = :s, carrier_box = :b, box_dimensions = :d, "
+                    "total_weight_kg = :w, tracking_number = :t, invoice_s3_key = :k, "
+                    "processed_by_spot = :i, processed_at = :p, fill_rate_percent = :f"
+                ),
+                ExpressionAttributeNames={"#s": "status"},
+                ExpressionAttributeValues={
+                    ":s": "SHIPPED",
+                    ":b": packing["box_label"],
+                    ":d": packing["box_dimensions_cm"],
+                    ":w": str(packing["total_weight_kg"]),
+                    ":t": tracking_number,
+                    ":k": s3_key,
+                    ":i": instance_id,
+                    ":p": processed_at,
+                    ":f": str(packing["fill_rate_percent"]),
+                },
+            )
 
-                packing = select_carrier_box(order.get("items", []))
-                tracking_number = f"TRK-EUW3-2026-{uuid.uuid4().hex[:6].upper()}"
+            msg_attrs = {}
+            if customer_email:
+                msg_attrs["customer_email"] = {"DataType": "String", "StringValue": customer_email}
 
-                local_pdf = f"/tmp/facture_{order_id}.pdf"
-                total_ttc = generate_invoice_pdf(order, packing, tracking_number, instance_id, local_pdf)
+            sns.publish(
+                TopicArn=SNS_SHIPPING_ARN,
+                Subject=f"[CloudShop] Commande {order_id} expediee ! Suivi : {tracking_number}",
+                Message=(
+                    f"Bonjour {order.get('customer_name', 'Client')},\n\n"
+                    f"Votre commande {order_id} a ete emballee et expediee par le batch EC2 Spot ({instance_id}).\n"
+                    f"- Destinataire : {customer_email or 'Tous les abonnes'}\n"
+                    f"- Statut : SHIPPED\n"
+                    f"- Numero de suivi : {tracking_number}\n"
+                    f"- Colis retenu : {packing['box_label']} ({packing['box_dimensions_cm']})\n"
+                    f"- Total TTC : {total_ttc:.2f} EUR\n\n"
+                    f"Facture PDF : {presigned_url}\n"
+                ),
+                MessageAttributes=msg_attrs,
+            )
 
-                s3_key = f"invoices/facture_{order_id}.pdf"
-                s3.upload_file(local_pdf, S3_BUCKET, s3_key, ExtraArgs={"ContentType": "application/pdf"})
+            sqs.delete_message(QueueUrl=SQS_QUEUE_URL, ReceiptHandle=msg["ReceiptHandle"])
+            processed_count += 1
+            print(f"[Spot Worker] Commande {order_id} -> SHIPPED ({tracking_number})")
 
-                presigned_url = s3.generate_presigned_url(
-                    "get_object",
-                    Params={"Bucket": S3_BUCKET, "Key": s3_key},
-                    ExpiresIn=86400,
-                )
-
-                processed_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-                ddb.update_item(
-                    Key={"order_id": order_id},
-                    UpdateExpression=(
-                        "SET #s = :s, carrier_box = :b, box_dimensions = :d, "
-                        "total_weight_kg = :w, tracking_number = :t, invoice_s3_key = :k, "
-                        "processed_by_spot = :i, processed_at = :p, fill_rate_percent = :f"
-                    ),
-                    ExpressionAttributeNames={"#s": "status"},
-                    ExpressionAttributeValues={
-                        ":s": "SHIPPED",
-                        ":b": packing["box_label"],
-                        ":d": packing["box_dimensions_cm"],
-                        ":w": str(packing["total_weight_kg"]),
-                        ":t": tracking_number,
-                        ":k": s3_key,
-                        ":i": instance_id,
-                        ":p": processed_at,
-                        ":f": str(packing["fill_rate_percent"]),
-                    },
-                )
-
-                sns.publish(
-                    TopicArn=SNS_SHIPPING_ARN,
-                    Subject=f"[CloudShop] Commande {order_id} expediee ! Suivi : {tracking_number}",
-                    Message=(
-                        f"Bonjour {order.get('customer_name', 'Client')},\n\n"
-                        f"Votre commande {order_id} a ete emballee et expediee (Worker EC2 Spot : {instance_id}).\n"
-                        f"- Statut : SHIPPED\n"
-                        f"- Numero de suivi : {tracking_number}\n"
-                        f"- Colis retenu : {packing['box_label']} ({packing['box_dimensions_cm']})\n"
-                        f"- Total TTC : {total_ttc:.2f} EUR\n\n"
-                        f"Facture PDF : {presigned_url}\n"
-                    ),
-                )
-
-                sqs.delete_message(QueueUrl=SQS_QUEUE_URL, ReceiptHandle=msg["ReceiptHandle"])
-                print(f"[Spot Worker] Commande {order_id} -> SHIPPED ({tracking_number})")
-        except Exception as exc:
-            print(f"[Spot Worker] Erreur : {exc}")
-            time.sleep(3)
+    print(f"[Spot Worker {instance_id}] File SQS vide ({processed_count} commandes traitees). Auto-extinction de l'instance Spot...")
+    os.system("sudo shutdown -h now || shutdown -h now")
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 # ==============================================================================
-# MODULE 05 : WORKER BATCH EC2 SPOT (CALCUL COLIS, FACTURE PDF S3 & SUIVI SNS)
+# MODULE 05 : WORKER BATCH EC2 SPOT À LA DEMANDE & PÉRIODIQUE (0 INSTANCE AU REPOS)
 # ==============================================================================
 
 resource "aws_security_group" "spot_worker_sg" {
@@ -72,36 +72,8 @@ locals {
     orders_table     = var.orders_table_name
     sns_shipping_arn = var.shipping_notification_topic_arn
   })
-}
 
-resource "aws_s3_object" "batch_worker_script" {
-  bucket  = var.invoices_bucket_name
-  key     = "scripts/batch_worker.py"
-  content = local.rendered_worker_py
-}
-
-resource "aws_instance" "spot_worker" {
-  ami                         = var.ami_id
-  instance_type               = "t3.micro"
-  subnet_id                   = var.subnet_id
-  vpc_security_group_ids      = [aws_security_group.spot_worker_sg.id]
-  iam_instance_profile        = aws_iam_instance_profile.spot_worker_profile.name
-  associate_public_ip_address = true
-
-  instance_market_options {
-    market_type = "spot"
-    spot_options {
-      spot_instance_type = "one-time"
-    }
-  }
-
-  root_block_device {
-    volume_size           = 8
-    volume_type           = "gp3"
-    delete_on_termination = true
-  }
-
-  user_data = <<-EOF
+  spot_user_data = <<-EOF
 #!/bin/bash
 set -e
 exec > /var/log/spot_worker.log 2>&1
@@ -112,32 +84,84 @@ pip3 install boto3 fpdf2
 aws s3 cp s3://${var.invoices_bucket_name}/scripts/batch_worker.py /opt/batch_worker.py --region ${var.aws_region}
 chmod +x /opt/batch_worker.py
 
-cat << 'SERVICE_EOF' > /etc/systemd/system/cloudshop-spot-worker.service
-[Unit]
-Description=CloudShop Batch Spot Worker (PDF & Carrier Box Sizing)
-After=network.target
-
-[Service]
-Type=simple
-User=root
-ExecStart=/usr/bin/python3 /opt/batch_worker.py
-Restart=always
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
-SERVICE_EOF
-
-systemctl daemon-reload
-systemctl enable --now cloudshop-spot-worker.service
+# Exécute le batch SQS -> PDF -> S3 -> DynamoDB -> SNS puis éteint/détruit l'instance Spot !
+python3 /opt/batch_worker.py
 EOF
+}
 
-  tags = {
-    Name = "${var.project_name}-spot-batch-worker"
+resource "aws_s3_object" "batch_worker_script" {
+  bucket  = var.invoices_bucket_name
+  key     = "scripts/batch_worker.py"
+  content = local.rendered_worker_py
+}
+
+# 1. Modèle de lancement (Launch Template) de l'EC2 Spot avec auto-destruction à l'arrêt
+resource "aws_launch_template" "spot_worker_lt" {
+  name                                 = "${var.project_name}-spot-worker-lt"
+  image_id                             = var.ami_id
+  instance_type                        = "t3.micro"
+  instance_initiated_shutdown_behavior = "terminate" # Quand le script fait 'shutdown -h now', l'instance est détruite !
+  user_data                            = base64encode(local.spot_user_data)
+
+  iam_instance_profile {
+    name = aws_iam_instance_profile.spot_worker_profile.name
+  }
+
+  instance_market_options {
+    market_type = "spot"
+    spot_options {
+      spot_instance_type = "one-time"
+    }
+  }
+
+  network_interfaces {
+    associate_public_ip_address = true
+    subnet_id                   = var.subnet_id
+    security_groups             = [aws_security_group.spot_worker_sg.id]
+  }
+
+  block_device_mappings {
+    device_name = "/dev/xvda"
+    ebs {
+      volume_size           = 8
+      volume_type           = "gp3"
+      delete_on_termination = true
+    }
+  }
+
+  tag_specifications {
+    resource_type = "instance"
+    tags = {
+      Name = "${var.project_name}-spot-batch-worker"
+      Role = "spot-batch-worker"
+    }
   }
 
   depends_on = [
     aws_iam_role_policy.spot_worker_policy,
     aws_s3_object.batch_worker_script
   ]
+}
+
+# 2. Planification périodique nocturne (0 instance au repos, lance 1 Spot à 02h00 UTC)
+resource "aws_autoscaling_group" "spot_periodic_asg" {
+  name                = "${var.project_name}-spot-periodic-asg"
+  min_size            = 0
+  desired_capacity    = 0 # 0 instance allumée par défaut !
+  max_size            = 1
+  vpc_zone_identifier = [var.subnet_id]
+
+  launch_template {
+    id      = aws_launch_template.spot_worker_lt.id
+    version = "$Latest"
+  }
+}
+
+resource "aws_autoscaling_schedule" "nightly_batch_start" {
+  scheduled_action_name  = "${var.project_name}-nightly-02h00-batch"
+  min_size               = 0
+  max_size               = 1
+  desired_capacity       = 1
+  recurrence             = "0 2 * * *" # Tous les jours à 02h00 du matin
+  autoscaling_group_name = aws_autoscaling_group.spot_periodic_asg.name
 }

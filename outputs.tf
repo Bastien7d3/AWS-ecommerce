@@ -8,9 +8,9 @@ output "front_instance_id" {
   value       = module.frontend_ec2.front_instance_id
 }
 
-output "spot_worker_instance_id" {
-  description = "Identifiant de l'instance EC2 Spot (Worker Batch PDF & Colisage)"
-  value       = module.batch_ec2_spot.spot_worker_instance_id
+output "spot_launch_template_id" {
+  description = "Identifiant du Launch Template EC2 Spot (Périodique & Lancement à la demande)"
+  value       = module.batch_ec2_spot.spot_launch_template_id
 }
 
 output "dynamodb_tables" {

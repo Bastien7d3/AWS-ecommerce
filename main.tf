@@ -61,24 +61,30 @@ module "serverless_lambda" {
 
 # 4. Serveur Web Front-End EC2 (+ option ALB & Auto Scaling Group)
 module "frontend_ec2" {
-  source                 = "./modules/04-frontend-ec2"
-  project_name           = var.project_name
-  aws_region             = var.aws_region
-  vpc_id                 = data.aws_vpc.default.id
-  subnet_ids             = data.aws_subnets.default.ids
-  ami_id                 = data.aws_ami.al2023.id
-  products_table_name    = module.database_dynamodb.products_table_name
-  products_table_arn     = module.database_dynamodb.products_table_arn
-  orders_table_name      = module.database_dynamodb.orders_table_name
-  orders_table_arn       = module.database_dynamodb.orders_table_arn
-  invoices_bucket_name   = module.database_dynamodb.invoices_bucket_name
-  invoices_bucket_arn    = module.database_dynamodb.invoices_bucket_arn
-  lambda_function_name   = module.serverless_lambda.lambda_function_name
-  lambda_function_arn    = module.serverless_lambda.lambda_function_arn
-  enable_autoscaling_alb = var.enable_autoscaling_alb
+  source                          = "./modules/04-frontend-ec2"
+  project_name                    = var.project_name
+  aws_region                      = var.aws_region
+  vpc_id                          = data.aws_vpc.default.id
+  subnet_ids                      = data.aws_subnets.default.ids
+  ami_id                          = data.aws_ami.al2023.id
+  products_table_name             = module.database_dynamodb.products_table_name
+  products_table_arn              = module.database_dynamodb.products_table_arn
+  orders_table_name               = module.database_dynamodb.orders_table_name
+  orders_table_arn                = module.database_dynamodb.orders_table_arn
+  invoices_bucket_name            = module.database_dynamodb.invoices_bucket_name
+  invoices_bucket_arn             = module.database_dynamodb.invoices_bucket_arn
+  lambda_function_name            = module.serverless_lambda.lambda_function_name
+  lambda_function_arn             = module.serverless_lambda.lambda_function_arn
+  order_confirmation_topic_arn    = module.messaging_sns_sqs.order_confirmation_topic_arn
+  shipping_notification_topic_arn = module.messaging_sns_sqs.shipping_notification_topic_arn
+  orders_batch_queue_url          = module.messaging_sns_sqs.orders_batch_queue_url
+  orders_batch_queue_arn          = module.messaging_sns_sqs.orders_batch_queue_arn
+  spot_launch_template_id         = module.batch_ec2_spot.spot_launch_template_id
+  spot_worker_role_arn            = module.batch_ec2_spot.spot_worker_role_arn
+  enable_autoscaling_alb          = var.enable_autoscaling_alb
 }
 
-# 5. Worker Batch EC2 Spot (Calcul colis S/M/L/XL, génération Facture PDF S3 & suivi SNS)
+# 5. Worker Batch EC2 Spot (Périodique + lancement à la demande + auto-destruction)
 module "batch_ec2_spot" {
   source                          = "./modules/05-batch-ec2-spot"
   project_name                    = var.project_name

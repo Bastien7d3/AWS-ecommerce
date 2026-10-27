@@ -16,7 +16,7 @@ resource "aws_security_group" "web_sg" {
   }
 
   egress {
-    description = "Sortie vers les API AWS (Lambda, DynamoDB, S3)"
+    description = "Sortie vers les API AWS (Lambda, DynamoDB, S3, SNS, SQS, EC2)"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
@@ -37,7 +37,6 @@ resource "aws_iam_role" "front_ec2_role" {
   })
 }
 
-# Permissions du serveur Web : Lire DynamoDB, Invoquer la Lambda, Lire les factures PDF sur S3
 resource "aws_iam_role_policy" "front_ec2_policy" {
   name = "${var.project_name}-front-ec2-policy"
   role = aws_iam_role.front_ec2_role.id
@@ -59,6 +58,26 @@ resource "aws_iam_role_policy" "front_ec2_policy" {
         Effect   = "Allow"
         Action   = ["s3:GetObject", "s3:ListBucket"]
         Resource = [var.invoices_bucket_arn, "${var.invoices_bucket_arn}/*"]
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["sns:Subscribe", "sns:SetSubscriptionAttributes"]
+        Resource = [var.order_confirmation_topic_arn, var.shipping_notification_topic_arn]
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["sqs:GetQueueAttributes"]
+        Resource = [var.orders_batch_queue_arn]
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["ec2:RunInstances", "ec2:DescribeInstances", "ec2:CreateTags"]
+        Resource = "*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["iam:PassRole"]
+        Resource = [var.spot_worker_role_arn]
       }
     ]
   })
@@ -76,10 +95,15 @@ locals {
     orders_table    = var.orders_table_name
     invoices_bucket = var.invoices_bucket_name
     lambda_name     = var.lambda_function_name
+    sns_confirm_arn = var.order_confirmation_topic_arn
+    sns_ship_arn    = var.shipping_notification_topic_arn
+    sqs_queue_url   = var.orders_batch_queue_url
+    spot_lt_id      = var.spot_launch_template_id
   })
 
   front_user_data = <<-EOF
 #!/bin/bash
+# Script hash: ${md5(local.rendered_server_py)}
 set -e
 exec > /var/log/front_server.log 2>&1
 
@@ -126,6 +150,7 @@ resource "aws_instance" "web_front_single" {
   iam_instance_profile        = aws_iam_instance_profile.front_ec2_profile.name
   associate_public_ip_address = true
   user_data                   = local.front_user_data
+  user_data_replace_on_change = true
 
   root_block_device {
     volume_size           = 8

@@ -1,6 +1,6 @@
 # Module 04 : Serveur Web Front-End EC2 & Élasticité (Auto Scaling / ALB)
 
-Ce dossier déploie la couche Front-End de la boutique ([`main.tf`](./main.tf) et [`src/app_server.py.tftpl`](./src/app_server.py.tftpl)).
+Ce dossier déploie la couche Front-End de la boutique et le tableau de bord d'administration ([`main.tf`](./main.tf) et [`src/app_server.py.tftpl`](./src/app_server.py.tftpl)).
 
 ---
 
@@ -13,18 +13,24 @@ Ce dossier déploie la couche Front-End de la boutique ([`main.tf`](./main.tf) e
    * Autorise uniquement :
      * `dynamodb:Scan` / `GetItem` sur les tables `products` et `orders`.
      * `lambda:InvokeFunction` sur la fonction `create-order`.
-     * `s3:GetObject` sur le bucket `invoices` (pour générer les liens de téléchargement des factures PDF).
+     * `s3:GetObject` sur le bucket `invoices` (pour générer les liens pré-signés des factures PDF).
+     * `sns:Subscribe` et `sns:SetSubscriptionAttributes` (pour abonner l'e-mail d'un client avec `FilterPolicy`).
+     * `sqs:GetQueueAttributes` (pour afficher le nombre de commandes en attente de batch dans SQS).
+     * `ec2:RunInstances` et `ec2:DescribeInstances` + `iam:PassRole` (pour permettre à l'admin de lancer manuellement une instance EC2 Spot à la demande depuis le Launch Template).
 3. **Option Haute Disponibilité & Élasticité (`enable_autoscaling_alb`) :**
    * Par défaut (`false`), déploie **1 instance EC2** en 15 secondes pour le développement itératif rapide.
    * Si activée (`true`), déploie automatiquement un **Application Load Balancer (ALB)** Multi-AZ, un **Auto Scaling Group** (`min=1, desired=2, max=4`) et une **Target Tracking Scaling Policy** sur le CPU (> 60 %).
 
 ---
 
-## 2. Comment ce module est connecté aux autres
+## 2. Les Routes API du Serveur Front-End
 
-* **Depuis `01-database-dynamodb` :** Lit en temps réel les articles du catalogue (`GET /api/products`) et la liste des commandes passées (`GET /api/orders`).
-* **Vers `03-serverless-lambda` :** Lorsque le client clique sur **"Commander"**, le serveur Front-End appelle la fonction Lambda `create-order` via Boto3 (`POST /api/order`).
-* **Depuis `05-batch-ec2-spot` (via DynamoDB & S3) :** Affiche automatiquement le format de carton calculé (`Colis S/M/L/XL`), le numéro de suivi transporteur et le lien **"📄 Ouvrir la Facture PDF"** dès que l'instance EC2 Spot a traité la commande.
+* `GET /api/products` : Lit les articles du catalogue dans `cloudshop-products`.
+* `POST /api/subscribe` : Abonne l'adresse e-mail saisie par le client aux 2 Topics SNS (`order-confirmation` et `shipping-notification`) avec une `FilterPolicy` `{"customer_email": ["..."]}` afin qu'il ne reçoive que ses propres commandes.
+* `POST /api/order` : Appelle la fonction Lambda `create-order` en lui transmettant `product_id`, `qty`, `customer_name` et `customer_email`.
+* `GET /api/spot-status` : Affiche en temps réel le nombre de messages en attente dans la file SQS et l'état des instances EC2 Spot récentes (`pending`, `running`, `shutting-down`, `terminated`).
+* `POST /api/launch-spot` : Permet à l'administrateur de créer à la demande une instance **EC2 Spot** à partir du Launch Template (`ec2.run_instances`). L'instance démarre, vide la file SQS, génère les factures PDF sur S3, puis s'auto-détruit (`shutdown -h now` -> `terminated`).
+* `GET /api/orders` : Liste les commandes DynamoDB et génère des liens pré-signés S3 temporaires (valables 1 heure) vers les factures PDF.
 
 ---
 

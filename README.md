@@ -93,14 +93,32 @@ Chaque partie de l'architecture possède son propre dossier dans [`modules/`](./
 | Dossier Module | Services AWS Gérés | Rôle & Connexions | Documentation Détaillée |
 | :--- | :--- | :--- | :--- |
 | **[`modules/01-database-dynamodb/`](./modules/01-database-dynamodb)** | **DynamoDB** (`products`, `orders`) + **Amazon S3** (`invoices`) | Stocke le catalogue produits (pré-rempli), l'historique des commandes et les factures PDF. Configuré en mode `PROVISIONED` (5 RCU / 5 WCU = 100 % *Always Free*). | [EXPLICATIONS_DYNAMODB_S3.md](./modules/01-database-dynamodb/EXPLICATIONS_DYNAMODB_S3.md) |
-| **[`modules/02-messaging-sns-sqs/`](./modules/02-messaging-sns-sqs)** | **Amazon SNS** (2 Topics) + **Amazon SQS** (File batch) | Envoie les notifications e-mail en temps réel (SNS) et conserve les commandes en attente jusqu'à 14 jours (SQS) pour découpler la Lambda du Worker EC2 Spot. | [EXPLICATIONS_SNS_SQS.md](./modules/02-messaging-sns-sqs/EXPLICATIONS_SNS_SQS.md) |
-| **[`modules/03-serverless-lambda/`](./modules/03-serverless-lambda)** | **AWS Lambda** (`create-order`) + **IAM** | Appelée par le Front-End EC2 lors d'un achat : décrémente le stock dans DynamoDB, crée la commande (`PENDING`), notifie SNS et pousse dans SQS. | [EXPLICATIONS_LAMBDA.md](./modules/03-serverless-lambda/EXPLICATIONS_LAMBDA.md) |
-| **[`modules/04-frontend-ec2/`](./modules/04-frontend-ec2)** | **EC2 `t3.micro`** + **ALB** + **Auto Scaling Group** | Héberge l'interface web de la boutique (Catalogue, bouton Commander via Lambda, suivi en temps réel des colis et téléchargement du PDF depuis S3). | [EXPLICATIONS_FRONTEND_EC2.md](./modules/04-frontend-ec2/EXPLICATIONS_FRONTEND_EC2.md) |
-| **[`modules/05-batch-ec2-spot/`](./modules/05-batch-ec2-spot)** | **EC2 Spot `t3.micro`** + **FPDF2** | Dépile SQS, calcule le carton transporteur optimal (`Colis S, M, L, XL`), génère la facture PDF sur S3, passe la commande à `SHIPPED` dans DynamoDB et envoie le N° de suivi via SNS. | [EXPLICATIONS_BATCH_SPOT.md](./modules/05-batch-ec2-spot/EXPLICATIONS_BATCH_SPOT.md) |
+| **[`modules/02-messaging-sns-sqs/`](./modules/02-messaging-sns-sqs)** | **Amazon SNS** (2 Topics + `FilterPolicy`) + **Amazon SQS** (File batch) | Route les notifications e-mail vers le bon client via `FilterPolicy` (SNS) et conserve les commandes en attente jusqu'à 14 jours (SQS) en attendant le réveil du Worker EC2 Spot. | [EXPLICATIONS_SNS_SQS.md](./modules/02-messaging-sns-sqs/EXPLICATIONS_SNS_SQS.md) |
+| **[`modules/03-serverless-lambda/`](./modules/03-serverless-lambda)** | **AWS Lambda** (`create-order`) + **IAM** | Appelée par le Front-End EC2 lors d'un achat : décrémente le stock dans DynamoDB, crée la commande (`PENDING`), notifie SNS (`MessageAttributes`) et pousse dans SQS. | [EXPLICATIONS_LAMBDA.md](./modules/03-serverless-lambda/EXPLICATIONS_LAMBDA.md) |
+| **[`modules/04-frontend-ec2/`](./modules/04-frontend-ec2)** | **EC2 `t3.micro`** + **ALB** + **Auto Scaling Group** | Héberge l'interface web de la boutique (Catalogue, Abonnement e-mail SNS, bouton Commander via Lambda, console Admin de lancement manuel du Worker EC2 Spot et téléchargement PDF S3). | [EXPLICATIONS_FRONTEND_EC2.md](./modules/04-frontend-ec2/EXPLICATIONS_FRONTEND_EC2.md) |
+| **[`modules/05-batch-ec2-spot/`](./modules/05-batch-ec2-spot)** | **Launch Template EC2 Spot** + **Planning Cron** + **FPDF2** | Aucune instance active au repos (`0,00 €/h`) : démarre périodiquement (02h00 UTC) ou sur clic Admin, vide la file SQS, calcule le carton (`S/M/L/XL`), génère le PDF sur S3, notifie SNS puis s'auto-détruit (`shutdown -h now` -> `terminated`). | [EXPLICATIONS_BATCH_SPOT.md](./modules/05-batch-ec2-spot/EXPLICATIONS_BATCH_SPOT.md) |
 
 ---
 
-## 4. Analyse FinOps & Seuil de Rentabilité (Break-Even Point)
+## 4. Zoom Technique : Cycle de Vie du Worker EC2 Spot & Routage E-mail SNS
+
+### A. Exécution Périodique ou à la Demande du Worker EC2 Spot (`Scale-to-Zero`)
+* **Zéro instance au repos :** Le module `05-batch-ec2-spot` ne laisse **aucune instance EC2 Spot allumée en permanence**. Il déploie un `aws_launch_template` Spot (`market_type = "spot"`) couplé à un Auto Scaling Group dont la capacité par défaut est `desired_capacity = 0`.
+* **Deux modes de déclenchement :**
+  1. **Périodique (Automatique) :** Une règle `aws_autoscaling_schedule` réveille automatiquement une instance Spot toutes les nuits à `02h00 UTC` (`0 2 * * *`).
+  2. **À la demande (Manuel par l'Admin) :** Depuis le panneau d'administration du site web, le bouton **« Créer & Lancer une Instance EC2 Spot maintenant »** appelle `ec2.run_instances()` sur le Launch Template.
+* **Traitement et Auto-Destruction :** Dès son démarrage, l'instance EC2 Spot dépile tous les messages en attente dans SQS, calcule le colisage, génère les factures PDF dans S3 et met à jour DynamoDB. Dès que la file SQS est vide, le script Python exécute `shutdown -h now` : grâce à l'option `instance_initiated_shutdown_behavior = "terminate"`, **AWS détruit immédiatement l'instance et son volume EBS**.
+
+### B. Comment Amazon SNS sait-il à qui envoyer l'e-mail ? (`FilterPolicy` & `MessageAttributes`)
+* **Fonctionnement Pub/Sub d'Amazon SNS :** Contrairement à un serveur SMTP, Amazon SNS nécessite qu'une adresse e-mail soit abonnée au Topic (`sns:Subscribe`) et confirmée via le lien *Confirm subscription* envoyé par AWS (`no-reply@sns.amazonaws.com`).
+* **Ciblage individuel par client :** Pour que chaque client ne reçoive **que ses propres commandes** sur un Topic partagé :
+  1. Lorsqu'un client saisit son e-mail sur le Front-End et clique sur **« S'abonner aux notifications SNS »**, le serveur crée un abonnement SNS doté d'une **`FilterPolicy`** : `{"customer_email": ["client@domaine.fr"]}`.
+  2. Lorsque la **Lambda** (confirmation) ou le **Worker Spot** (expédition + lien PDF) publie dans SNS, il attache l'attribut `MessageAttributes = {"customer_email": {"DataType": "String", "StringValue": email_du_client}}`.
+  3. **Amazon SNS filtre automatiquement** le message et l'achemine uniquement vers la boîte mail du client concerné.
+
+---
+
+## 5. Analyse FinOps & Seuil de Rentabilité (Break-Even Point)
 
 ### Comparatif des coûts (Région eu-west-3 Paris)
 * **Coût de l'EC2 Spot en batch éphémère (2h / nuit = 60h / mois) :**
