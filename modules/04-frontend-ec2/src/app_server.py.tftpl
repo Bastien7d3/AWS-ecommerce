@@ -62,6 +62,7 @@ HTML_PAGE = """<!DOCTYPE html>
       --text: #0f172a;
       --muted: #64748b;
       --green: #16a34a;
+      --red: #dc2626;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); padding-bottom: 3rem; }
@@ -79,7 +80,7 @@ HTML_PAGE = """<!DOCTYPE html>
     .prod-title { font-weight: 700; font-size: 1.05rem; margin-bottom: 0.4rem; }
     .prod-meta { font-size: 0.86rem; color: var(--muted); margin-bottom: 0.8rem; }
     .price { font-size: 1.25rem; font-weight: 800; color: var(--navy); }
-    input[type="email"], input[type="text"], input[type="password"] { padding: 0.55rem 0.8rem; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 0.92rem; width: 270px; }
+    input[type="email"], input[type="text"], input[type="password"] { padding: 0.55rem 0.8rem; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 0.92rem; width: 230px; }
     button { background: var(--orange); color: #111; border: none; font-weight: 700; padding: 0.6rem 1.1rem; border-radius: 6px; cursor: pointer; font-size: 0.92rem; }
     button:hover { background: #e68a00; }
     button:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -113,26 +114,16 @@ HTML_PAGE = """<!DOCTYPE html>
     <div class="card">
       <h2><span>1. Connexion Client & Authentification (Amazon Cognito)</span></h2>
       <p style="font-size: 0.88rem; color: var(--muted); margin-bottom: 0.8rem;">
-        Créez un compte ou connectez-vous via Amazon Cognito pour générer votre jeton JWT.
+        S'inscrire créera automatiquement votre compte Cognito et votre abonnement aux notifications SNS.
       </p>
       <div style="display:flex; gap:0.7rem; align-items:center; flex-wrap:wrap; margin-bottom: 0.8rem;">
+        <input type="text" id="customer-name" value="Bastien" placeholder="Votre nom" style="width:160px;">
         <input type="email" id="cognito-email" placeholder="votre.email@domaine.fr">
-        <input type="password" id="cognito-password" placeholder="Mot de passe" style="width:200px;">
-        <button class="btn-secondary" onclick="registerCognito()">S'inscrire (Cognito)</button>
+        <input type="password" id="cognito-password" placeholder="Mot de passe" style="width:180px;">
+        <button class="btn-secondary" onclick="registerCognito()">S'inscrire (Cognito + SNS)</button>
         <button class="btn-secondary" onclick="loginCognito()">Se connecter</button>
       </div>
-      <p style="font-size:0.86rem; color:var(--muted);" id="cognito-status">Statut : <strong>Non connecté</strong></p>
-
-      <hr style="margin: 1rem 0; border: 0; border-top: 1px solid #e2e8f0;">
-
-      <p style="font-size: 0.88rem; color: var(--muted); margin-bottom: 0.8rem;">
-        <strong>Abonnement aux notifications d'expédition (Amazon SNS) :</strong>
-      </p>
-      <div style="display:flex; gap:0.7rem; align-items:center; flex-wrap:wrap;">
-        <input type="text" id="customer-name" value="Bastien" placeholder="Nom du client" style="width:180px;">
-        <input type="email" id="customer-email" placeholder="votre.email@domaine.fr">
-        <button class="btn-secondary" onclick="subscribeEmail(this)">📧 S'abonner aux notifications SNS</button>
-      </div>
+      <p style="font-size:0.86rem; color:var(--muted);" id="cognito-status">Statut : <strong style="color:var(--red)">Non connecté (Achats bloqués)</strong></p>
     </div>
 
     <!-- 2. CATALOGUE PRODUITS & PRISE DE COMMANDE LAMBDA -->
@@ -153,7 +144,7 @@ HTML_PAGE = """<!DOCTYPE html>
         </button>
       </h2>
       <p style="font-size: 0.88rem; color: #0c4a6e; margin-bottom: 0.8rem;">
-        Au repos, <strong>0 instance EC2 Spot ne tourne (0,00 €)</strong> : les commandes s'accumulent dans la file SQS au statut <code>PENDING</code>. Le batch se lance soit automatiquement la nuit à <strong>02h00 UTC</strong>, soit à la demande en cliquant sur le bouton bleu ci-dessus : AWS crée alors une instance EC2 Spot qui dépile SQS, calcule les cartons (<code>S/M/L/XL</code>), génère les factures PDF sur S3, envoie les numéros de suivi via SNS, puis <strong>s'auto-détruit automatiquement (<code>terminated</code>) dès que la file est vide</strong> !
+        Au repos, <strong>0 instance EC2 Spot ne tourne (0,00 €)</strong> : les commandes s'accumulent dans la file SQS au statut <code>PENDING</code>. Le batch se lance soit automatiquement la nuit à <strong>02h00 UTC</strong>, soit à la demande en cliquant sur le bouton bleu ci-dessus.
       </p>
       <div id="spot-status-bar" style="font-size:0.92rem; background:white; padding:0.75rem 1rem; border-radius:6px; border:1px solid #bae6fd;">
         Chargement de l'état de la file SQS et des instances Spot...
@@ -186,7 +177,6 @@ HTML_PAGE = """<!DOCTYPE html>
   </div>
 
   <script>
-    // Configuration & Instanciation Cognito globale
     window.APP_CONFIG = {
       userPoolId: '""" + USER_POOL_ID + """',
       userPoolClientId: '""" + USER_POOL_CLIENT_ID + """',
@@ -202,7 +192,7 @@ HTML_PAGE = """<!DOCTYPE html>
       userPool = new AmazonCognitoIdentity.CognitoUserPool(poolData);
     }
 
-    function registerCognito() {
+    async function registerCognito() {
       if (!userPool) { alert('Erreur: SDK Cognito non disponible.'); return; }
       const email = document.getElementById('cognito-email').value.trim();
       const password = document.getElementById('cognito-password').value;
@@ -212,9 +202,21 @@ HTML_PAGE = """<!DOCTYPE html>
         new AmazonCognitoIdentity.CognitoUserAttribute({ Name: 'email', Value: email })
       ];
 
-      userPool.signUp(email, password, attributeList, null, (err, result) => {
+      // 1. Inscription Cognito
+      userPool.signUp(email, password, attributeList, null, async (err, result) => {
         if (err) { alert('Erreur Cognito : ' + err.message); return; }
-        showToast('✅ Compte Cognito créé ! Un code de vérification a été envoyé sur ' + email);
+
+        // 2. Abonnement automatique SNS dans la foulée
+        try {
+          await fetch('/api/subscribe', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ email })
+          });
+          showToast('✅ Compte créé ! Un e-mail d activation Cognito et une confirmation SNS vous ont été envoyés sur ' + email);
+        } catch (e) {
+          showToast('✅ Compte Cognito créé ! Cliquez sur le lien d activation dans votre boîte mail.');
+        }
       });
     }
 
@@ -231,9 +233,9 @@ HTML_PAGE = """<!DOCTYPE html>
         onSuccess: (result) => {
           const jwtToken = result.getIdToken().getJwtToken();
           sessionStorage.setItem('jwt_token', jwtToken);
-          document.getElementById('customer-email').value = email;
-          document.getElementById('cognito-status').innerHTML = 'Statut : <strong style="color:var(--green)">Connecté avec ' + email + ' (Token JWT actif)</strong>';
-          showToast('✅ Session Cognito active !');
+          sessionStorage.setItem('user_email', email);
+          document.getElementById('cognito-status').innerHTML = 'Statut : <strong style="color:var(--green)">Connecté avec ' + email + ' (Token JWT actif - Achats autorisés)</strong>';
+          showToast('✅ Session Cognito active ! Vous pouvez désormais passer commande.');
         },
         onFailure: (err) => { alert('Erreur de connexion : ' + err.message); }
       });
@@ -243,23 +245,6 @@ HTML_PAGE = """<!DOCTYPE html>
       const toast = document.getElementById('toast');
       toast.style.display = 'block';
       toast.textContent = msg;
-    }
-
-    async function subscribeEmail(btn) {
-      const email = document.getElementById('customer-email').value.trim();
-      if (!email) { alert('Veuillez saisir une adresse e-mail.'); return; }
-      btn.disabled = true;
-      try {
-        const res = await fetch('/api/subscribe', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({ email })
-        });
-        const data = await res.json();
-        showToast(data.message || 'Abonnement SNS créé ! Vérifiez votre boîte mail pour confirmer.');
-      } finally {
-        btn.disabled = false;
-      }
     }
 
     async function launchSpotWorker(btn) {
@@ -276,7 +261,7 @@ HTML_PAGE = """<!DOCTYPE html>
         if (data.error) {
           showToast(`❌ Erreur : $${data.error}`);
         } else {
-          showToast(`🚀 Instance Worker $${data.instance_id} ($${data.mode}) créée à la demande ! Elle démarre, traite la file SQS, génère les PDF et s'auto-détruira.`);
+          showToast(`🚀 Instance Worker $${data.instance_id} ($${data.mode}) créée à la demande !`);
         }
         await loadSpotStatus();
       } finally {
@@ -341,19 +326,30 @@ HTML_PAGE = """<!DOCTYPE html>
     }
 
     async function orderProduct(productId, btn) {
+      // VERIFICATION OBLIGATOIRE DU TOKEN JWT
+      const jwtToken = sessionStorage.getItem('jwt_token');
+      const userEmail = sessionStorage.getItem('user_email');
+
+      if (!jwtToken || !userEmail) {
+        alert('⛔ Accès refusé : Vous devez créer un compte et vous connecter via Amazon Cognito pour pouvoir passer une commande !');
+        return;
+      }
+
       btn.disabled = true;
       const oldText = btn.textContent;
       btn.textContent = 'Appel Lambda...';
       try {
         const customer_name = document.getElementById('customer-name').value.trim() || 'Client CloudShop';
-        const customer_email = document.getElementById('customer-email').value.trim();
         const res = await fetch('/api/order', {
           method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({ product_id: productId, qty: 1, customer_name, customer_email })
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + jwtToken
+          },
+          body: JSON.stringify({ product_id: productId, qty: 1, customer_name, customer_email: userEmail })
         });
         const data = await res.json();
-        showToast(`✅ Commande $${data.order_id} enregistrée (statut PENDING) et placée dans SQS ! Cliquez sur "Créer & Lancer une Instance EC2 Spot" pour traiter le lot.`);
+        showToast(`✅ Commande $${data.order_id} enregistrée pour $${userEmail} !`);
         await loadAll();
       } finally {
         btn.disabled = false;
@@ -475,7 +471,7 @@ class ShopHandler(BaseHTTPRequestHandler):
                 )
                 self._send_json(200, {
                     "status": "SUBSCRIBED",
-                    "message": f"Abonnement SNS (avec FilterPolicy sur {email}) envoyé ! Cliquez sur 'Confirm subscription' dans votre boîte mail.",
+                    "message": f"Abonnement SNS créé pour {email}.",
                 })
             elif self.path == "/api/launch-spot":
                 ec2 = boto3.client("ec2", region_name=REGION)
