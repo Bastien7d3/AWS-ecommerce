@@ -18,9 +18,6 @@
 * **Grille tarifaire AWS (`eu-west-3`) :**
   * **Always Free (Gratuit à vie) :** Jusqu'à **50 000 utilisateurs actifs / mois (MAU)**.
   * Au-delà de 50 000 MAU : **0,0055 $ par MAU** (de 50 001 à 100 000 MAU).
-* **Où voir la consommation dans la Console AWS :**
-  * **Console AWS -> Amazon Cognito -> User pools -> `cloudshop-user-pool` -> Onglet *Users*** (nombre d'utilisateurs inscrits).
-  * **Console AWS -> CloudWatch -> Metrics -> All metrics -> `AWS/Cognito`** (`SignUpSuccesses`, `SignInSuccesses`).
 
 ---
 
@@ -28,7 +25,7 @@
 * **Ressources Terraform ([`modules/01-database-dynamodb/main.tf`](./modules/01-database-dynamodb/main.tf) & [`main.tf`](./main.tf)) :**
   * Table DynamoDB `cloudshop-products` : Mode `PROVISIONED` (**5 RCU / 5 WCU**).
   * Table DynamoDB `cloudshop-orders` : Mode `PROVISIONED` (**5 RCU / 5 WCU**).
-  * Table DynamoDB `cloudshop-tfstate-locks` (verrouillage Terraform) : Mode `PAY_PER_REQUEST`.
+  * Table DynamoDB `cloudshop-tfstate-locks` (verrouillage Terraform) : Mode `PAY_PER_REQUEST` -> usage vraiment peu fréquent mais pertinent de payer à l'usage pour laisser de la place à une éventuelle extension des autres bases de données.
   * Bucket S3 `cloudshop-invoices-689505268069` (Factures PDF + scripts Python).
   * Bucket S3 `cloudshop-tfstate-fisa2026-unique` (État partagé `terraform.tfstate`).
 * **Consommation réelle relevée sur AWS :**
@@ -40,9 +37,6 @@
 * **Grille tarifaire AWS (`eu-west-3`) :**
   * **DynamoDB (*Always Free*) :** 25 Go de stockage + 25 WCU + 25 RCU gratuits à vie (permettent jusqu'à **200 millions de requêtes/mois**). Au-delà en mode *On-Demand* : **1,34 $ / million d'écritures** et **0,268 $ / million de lectures**.
   * **Amazon S3 (*Free Tier 12 mois*) :** 5 Go de stockage Standard + 20 000 `GET` + 2 000 `PUT` gratuits/mois. Au-delà : **0,024 $ / Go / mois** ; **0,0053 $ / 1 000 requêtes `PUT`** ; **0,00042 $ / 1 000 requêtes `GET`**.
-* **Où voir la consommation dans la Console AWS :**
-  * **DynamoDB :** **Console AWS -> DynamoDB -> Tables -> `cloudshop-orders` -> Onglet *Monitor*** (graphiques *Read usage (average RCU)* et *Write usage (average WCU)*).
-  * **Amazon S3 :** **Console AWS -> S3 -> Buckets -> `cloudshop-invoices-689505268069` -> Onglet *Metrics*** (*Total bucket size* et *Total number of objects*).
 
 ---
 
@@ -57,10 +51,6 @@
 * **Grille tarifaire AWS (`eu-west-3`) :**
   * **Amazon SQS (*Always Free*) :** **1 000 000 de requêtes / mois gratuites à vie**. Au-delà : **0,40 $ par million de requêtes**.
   * **Amazon SNS (*Always Free*) :** **1 000 000 de publications** + **1 000 notifications e-mail / mois gratuites à vie**. Au-delà de 1 000 e-mails/mois : **2,00 $ par 100 000 e-mails** (soit `0,00002 $ / e-mail`).
-* **Où voir la consommation dans la Console AWS :**
-  * **SQS :** **Console AWS -> Simple Queue Service -> Queues -> `cloudshop-orders-batch-queue` -> Onglet *Monitoring*** (*NumberOfMessagesSent*, *NumberOfMessagesReceived*, *ApproximateNumberOfMessagesVisible*).
-  * **SNS :** **Console AWS -> Simple Notification Service -> Topics -> `cloudshop-order-confirmation` -> Onglet *Monitoring*** (*NumberOfMessagesPublished*, *NumberOfNotificationsDelivered*, *NumberOfNotificationsFilteredOut*).
-
 ---
 
 ### Module 03 : Cœur Transactionnel Serverless (`modules/03-serverless-lambda`)
@@ -75,25 +65,11 @@
     * À **128 Mo de RAM** et **603 ms** par commande, 1 commande consomme `0,125 Go x 0,603 s = 0,0754 Go-s`.
     * L'offre *Always Free* couvre donc gratuitement jusqu'à **5 300 000 exécutions de `create-order` en Go-s** (plafonnée à **1 000 000 de requêtes gratuites/mois**).
   * Au-delà du Free Tier : **0,20 $ / million de requêtes** + **0,0000166667 $ par Go-seconde**.
-* **Où voir la consommation dans la Console AWS :**
-  * **Console AWS -> AWS Lambda -> Functions -> `cloudshop-create-order` -> Onglet *Monitor*** (Graphiques *Invocations*, *Duration (min/avg/max)*, *Error count*).
-  * **Console AWS -> CloudWatch -> Log groups -> `/aws/lambda/cloudshop-create-order`** (chaque ligne `REPORT RequestId:` affiche `Duration: 603.40 ms | Billed Duration: 604 ms | Memory Size: 128 MB | Max Memory Used: 72 MB`).
 
 ---
 
 ### Module 04 : Serveur Web Front-End EC2 & Élasticité (`modules/04-frontend-ec2`)
-* **Ressources Terraform ([`modules/04-frontend-ec2/main.tf`](./modules/04-frontend-ec2/main.tf)) :**
-  * Mode par défaut (`enable_autoscaling_alb = false`) : 1 instance EC2 `t3.micro` On-Demand + 1 disque EBS `gp3` de `8 Go` (3 000 IOPS).
-  * Mode Haute Disponibilité (`enable_autoscaling_alb = true`) : Application Load Balancer (ALB) Multi-AZ + Auto Scaling Group (`1 à 4 instances t3.micro`).
-* **Consommation réelle relevée sur AWS :**
-  * 1 instance `t3.micro` active (`i-088bd31eb6e083221`) + 1 volume EBS `gp3` de 8 Go (`vol-000ad9211542e6d47`) -> **0,00 $** (couvert par les 750 h/mois EC2 `t3.micro` et 30 Go EBS du Free Tier).
-* **Grille tarifaire AWS (`eu-west-3` hors Free Tier) :**
-  * Instance EC2 `t3.micro` On-Demand : **0,0118 $ / heure** -> **8,61 $ / mois** (pour 730 h).
-  * Disque EBS `gp3` (8 Go à 0,088 $/Go/mois) : **0,70 $ / mois**.
-  * Application Load Balancer (si activé en prod Multi-AZ) : **0,0243 $ / heure** (**17,74 $ / mois**) + **0,008 $ par LCU-heure**.
-* **Où voir la consommation dans la Console AWS :**
-  * **Console AWS -> EC2 -> Instances -> `cloudshop-front-ec2` -> Onglet *Monitoring*** (*CPU utilization*, *Network in/out*).
-  * **Console AWS -> Billing and Cost Management -> Free Tier** (jauge des 750 heures mensuelles `t3.micro` et des 30 Go EBS).
+(à compléter)
 
 ---
 
@@ -118,20 +94,7 @@
     * Calcul EC2 Spot `t3.micro` : `60 h x 0,0040 $/h` = **0,24 $ / mois**
     * Disque EBS `gp3` 8 Go éphémère (60 h sur 730 h) : `0,70 $ x (60 / 730)` = **0,058 $ / mois**
     * **Total mensuel (2h/nuit) : ~0,30 $ / mois !**
-* **Où voir la consommation et les prix Spot dans la Console AWS :**
-  * **Console AWS -> EC2 -> Spot Requests -> Bouton *Pricing history*** (sélectionner `t3.micro`, `Linux/UNIX`, pour afficher la courbe officielle des prix `eu-west-3a/b/c`).
-  * **Console AWS -> EC2 -> Auto Scaling Groups -> `cloudshop-spot-periodic-asg` -> Onglet *Activity*** (historique des lancements et destructions).
 
----
-
-### Récapitulatif : Les 4 Endroits Clés où récupérer vos Captures d'Écran FinOps sur AWS
-
-| Vue / Preuve à capturer | Chemin exact dans la Console AWS | Ce que cela prouve pour le rapport / soutenance |
-| :--- | :--- | :--- |
-| **1. Facture Globale à 0,00 $** | **Billing and Cost Management -> Cost Explorer** (Grouper par *Service*) | Prouve que les 17 services utilisés coûtent **0,00 $** grâce au dimensionnement Free Tier. |
-| **2. Jauges d'utilisation Free Tier** | **Billing and Cost Management -> Free Tier** | Affiche le % consommé sur les 750h EC2, 30 Go EBS, 25 RCU/WCU DynamoDB, 1M SQS/Lambda. |
-| **3. Métriques Temps Réel (Lambda/SQS/SNS)** | **CloudWatch -> Metrics -> All metrics** (`AWS/Lambda`, `AWS/SQS`, `AWS/SNS`) | Donne le temps exact d'exécution (`603 ms` sur Lambda) et le nombre exact de messages traités. |
-| **4. Prix Historique du Marché Spot** | **EC2 -> Spot Requests -> Pricing history** (`t3.micro` en `eu-west-3`) | Prouve le tarif réel de **0,0040 $/h** (-66 % vs On-Demand `0,0118 $/h`). |
 
 ---
 
@@ -146,6 +109,7 @@ Pour déterminer quelle architecture est financièrement la plus judicieuse selo
 2. **Architecture B — Notre Architecture Hybride (EC2 Front + Lambda + Worker Batch EC2 Spot Éphémère) :**
    * **Front-End :** Instance **EC2 `t3.micro`** (ou **ALB + Auto Scaling Group** lors des fortes charges).
    * **Prise de commande :** **AWS Lambda** (`create-order`) + **SQS** + **SNS**.
+   * **Données & Messaging :** DynamoDB + SQS + SNS + S3 + Cognito
    * **Back-Office (Colisage + Facture PDF) :** **Worker Batch EC2 Spot Éphémère** (`0,0040 $/h`, détruit automatiquement dès que la file SQS est vide).
 
 ---
@@ -161,7 +125,7 @@ Pour déterminer quelle architecture est financièrement la plus judicieuse selo
   * Coût horaire tout compris (Spot `0,0040 $/h` + EBS `gp3` proratisé `0,0010 $/h`) = **0,0050 $ / heure**, soit **0,00000021 $ par commande** (**120 fois moins cher par commande que Lambda** dès que l'instance traite un lot continu !).
   * Même en comptant un réveil quotidien fixe de **2h par nuit (60h/mois)** pour absorber les lots et rapports d'audit : le coût fixe est de **0,30 $ / mois** (avec destruction EBS) à **0,94 $ / mois** (si volume EBS conservé).
   * **Seuil de rentabilité du Batch (Break-Even Point) :**
-    * Dès **12 000 à 40 000 commandes / mois** (ou dès qu'un traitement par lot dépasse 15 minutes), **le Worker EC2 Spot éphémère bat financièrement et techniquement AWS Lambda**.
+    * Dès **12 000 commandes / mois** (ou dès qu'un traitement par lot dépasse 15 minutes), **le Worker EC2 Spot éphémère bat financièrement et techniquement AWS Lambda**.
 
 ---
 
@@ -197,7 +161,7 @@ Supposons qu'un **client actif** effectue en moyenne **20 pages vues / appels AP
 
 ---
 
-### Conclusion FinOps à présenter au Jury
+### Conclusion 
 
 1. **Pendant la 1re année (et pour notre démonstration) :** Notre architecture **Hybride (1 EC2 `t3.micro` + Lambda + SQS/SNS + Batch EC2 Spot éphémère)** nous coûte **exactement 0,00 $** (prouvé par AWS Cost Explorer), tout en démontrant la maîtrise complète de l'IaaS (EC2 On-Demand, EC2 Spot, Auto Scaling, ALB) et du PaaS/Serverless (Lambda, DynamoDB, SQS, SNS, S3, Cognito).
 2. **En production réelle (hors Free Tier 12 mois) :**
