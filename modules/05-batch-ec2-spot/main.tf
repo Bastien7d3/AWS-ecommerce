@@ -1,13 +1,19 @@
 # ==============================================================================
-# MODULE 05 : WORKER BATCH EC2 SPOT À LA DEMANDE & PÉRIODIQUE (0 INSTANCE AU REPOS)
+# MODULE 05 : WORKER BATCH EC2 SPOT A LA DEMANDE & PERIODIQUE (SCALE-TO-ZERO)
+# - Aucune instance Spot ne tourne en permanence au repos (0,00 EUR/h).
+# - L'instance Spot est creee soit periodiquement (Planning Auto Scaling),
+#   soit manuellement a la demande par l'Admin depuis l'interface Web.
+# - Elle depile SQS, calcule les colis S/M/L/XL, genere les PDF sur S3,
+#   met a jour DynamoDB, envoie les mails SNS filtres, puis s'auto-detruit !
 # ==============================================================================
 
 resource "aws_security_group" "spot_worker_sg" {
   name        = "${var.project_name}-spot-worker-sg"
-  description = "Aucun port entrant ouvert - Sortie vers les API AWS (SQS, S3, DynamoDB, SNS)"
+  description = "Worker Batch EC2 Spot - Aucun port entrant ouvert (securite maximale)"
   vpc_id      = var.vpc_id
 
   egress {
+    description = "Sortie HTTPS vers SQS, S3, DynamoDB et SNS"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
@@ -21,9 +27,9 @@ resource "aws_iam_role" "spot_worker_role" {
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
+      Action    = "sts:AssumeRole"
       Effect    = "Allow"
       Principal = { Service = "ec2.amazonaws.com" }
-      Action    = "sts:AssumeRole"
     }]
   })
 }
@@ -53,7 +59,12 @@ resource "aws_iam_role_policy" "spot_worker_policy" {
       {
         Effect   = "Allow"
         Action   = ["sns:Publish"]
-        Resource = var.shipping_notification_topic_arn
+        Resource = [var.shipping_notification_topic_arn, var.order_confirmation_topic_arn]
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["ec2:DescribeInstances"]
+        Resource = "*"
       }
     ]
   })
@@ -71,6 +82,7 @@ locals {
     s3_bucket        = var.invoices_bucket_name
     orders_table     = var.orders_table_name
     sns_shipping_arn = var.shipping_notification_topic_arn
+    sns_confirm_arn  = var.order_confirmation_topic_arn
   })
 
   spot_user_data = <<-EOF
@@ -95,29 +107,17 @@ resource "aws_s3_object" "batch_worker_script" {
   content = local.rendered_worker_py
 }
 
-# 1. Modèle de lancement (Launch Template) de l'EC2 Spot avec auto-destruction à l'arrêt
+# 1. Modèle de lancement (Launch Template) de l'EC2 Worker avec auto-destruction à l'arrêt
 resource "aws_launch_template" "spot_worker_lt" {
   name                                 = "${var.project_name}-spot-worker-lt"
   image_id                             = var.ami_id
   instance_type                        = "t3.micro"
   instance_initiated_shutdown_behavior = "terminate" # Quand le script fait 'shutdown -h now', l'instance est détruite !
   user_data                            = base64encode(local.spot_user_data)
+  vpc_security_group_ids               = [aws_security_group.spot_worker_sg.id]
 
   iam_instance_profile {
     name = aws_iam_instance_profile.spot_worker_profile.name
-  }
-
-  instance_market_options {
-    market_type = "spot"
-    spot_options {
-      spot_instance_type = "one-time"
-    }
-  }
-
-  network_interfaces {
-    associate_public_ip_address = true
-    subnet_id                   = var.subnet_id
-    security_groups             = [aws_security_group.spot_worker_sg.id]
   }
 
   block_device_mappings {
