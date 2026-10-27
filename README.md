@@ -135,18 +135,32 @@ Chaque partie de l'architecture possède son propre dossier dans [`modules/`](./
 
 ---
 
-## 5. Commandes de Déploiement & Destruction (Environnement Éphémère)
+## 6. Commandes de Déploiement, Synchronisation & Destruction
 
-À la racine du dépôt :
+### Option 1 : Relance automatique en 1 clic (Recommandé)
+Si un membre de l'équipe a modifié le code ou ajouté un module Terraform sur GitHub, exécutez simplement :
 
 ```powershell
-# 1. Initialiser les modules et providers Terraform
-terraform init
+# Sur Windows (PowerShell) :
+.\reload.ps1
 
-# 2. Vérifier la syntaxe et déployer toute l'architecture connectée
+# Sur Linux / macOS / Git Bash :
+./reload.sh
+```
+Ce script effectue automatiquement le `git pull`, charge les nouveaux modules (`terraform init -upgrade`), valide la syntaxe (`terraform validate`), applique les changements (`terraform apply -auto-approve`) et affiche l'URL publique de la boutique.
+
+### Option 2 : Commandes manuelles étape par étape
+```powershell
+# 1. Récupérer les modifications Git
+git pull origin main
+
+# 2. Initialiser et mettre à niveau les modules Terraform
+terraform init -upgrade
+
+# 3. Vérifier la syntaxe et déployer toute l'architecture
 terraform validate
 terraform apply -auto-approve
 
-# 3. Détruire intégralement l'infrastructure après les tests (Garantie 0,00 €)
+# 4. Détruire intégralement l'infrastructure après les tests (Garantie 0,00 €)
 terraform destroy -auto-approve
 ```
