@@ -99,6 +99,8 @@ locals {
     sns_ship_arn    = var.shipping_notification_topic_arn
     sqs_queue_url   = var.orders_batch_queue_url
     spot_lt_id      = var.spot_launch_template_id
+    user_pool_id        = var.user_pool_id
+    user_pool_client_id = var.user_pool_client_id
   })
 
   front_user_data = <<-EOF

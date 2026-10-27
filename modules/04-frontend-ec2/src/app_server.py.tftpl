@@ -8,6 +8,8 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 import boto3
 from botocore.config import Config
 
+USER_POOL_ID = "${user_pool_id}"
+USER_POOL_CLIENT_ID = "${user_pool_client_id}"
 REGION = "${region}"
 PRODUCTS_TABLE = "${products_table}"
 ORDERS_TABLE = "${orders_table}"
@@ -106,11 +108,24 @@ HTML_PAGE = """<!DOCTYPE html>
   <div class="container">
     <div id="toast"></div>
 
-    <!-- 1. IDENTIFICATION CLIENT & ABONNEMENT EMAIL SNS -->
+<!-- 1. IDENTIFICATION CLIENT & AUTHENTIFICATION COGNITO -->
     <div class="card">
-      <h2><span>1. Coordonnées Client & Réception des E-mails (Amazon SNS + FilterPolicy)</span></h2>
+      <h2><span>1. Connexion Client & Authentification (Amazon Cognito)</span></h2>
       <p style="font-size: 0.88rem; color: var(--muted); margin-bottom: 0.8rem;">
-        <strong>Comment SNS sait à qui envoyer le mail ?</strong> Amazon SNS fonctionne par abonnement (<em>Topic Subscription</em>) avec une politique de filtrage (<code>FilterPolicy: {"customer_email": ["..."]}</code>). Saisissez votre e-mail ci-dessous : si c'est la première fois, cliquez sur <em>"S'abonner aux notifications SNS"</em> et validez le lien reçu par mail d'AWS (<code>no-reply@sns.amazonaws.com</code>).
+        Créez un compte ou connectez-vous via Amazon Cognito pour générer votre jeton JWT.
+      </p>
+      <div style="display:flex; gap:0.7rem; align-items:center; flex-wrap:wrap; margin-bottom: 0.8rem;">
+        <input type="email" id="cognito-email" placeholder="votre.email@domaine.fr">
+        <input type="password" id="cognito-password" placeholder="Mot de passe" style="padding:0.55rem 0.8rem; border:1px solid #cbd5e1; border-radius:6px; font-size:0.92rem; width:200px;">
+        <button class="btn-secondary" onclick="registerCognito()">S'inscrire (Cognito)</button>
+        <button class="btn-secondary" onclick="loginCognito()">Se connecter</button>
+      </div>
+      <p style="font-size:0.86rem; color:var(--muted);" id="cognito-status">Statut : <strong>Non connecté</strong></p>
+
+      <hr style="margin: 1rem 0; border: 0; border-top: 1px solid #e2e8f0;">
+
+      <p style="font-size: 0.88rem; color: var(--muted); margin-bottom: 0.8rem;">
+        <strong>Abonnement aux notifications d'expédition (Amazon SNS) :</strong>
       </p>
       <div style="display:flex; gap:0.7rem; align-items:center; flex-wrap:wrap;">
         <input type="text" id="customer-name" value="Bastien" placeholder="Nom du client" style="width:180px;">
@@ -290,7 +305,55 @@ HTML_PAGE = """<!DOCTYPE html>
 
     loadAll();
     setInterval(() => { loadOrders(); loadSpotStatus(); }, 5000);
+    function registerCognito() {
+          const email = document.getElementById('cognito-email').value.trim();
+          const password = document.getElementById('cognito-password').value;
+          if (!email || !password) { alert('Veuillez saisir un e-mail et un mot de passe.'); return; }
+
+          const attributeList = [
+            new AmazonCognitoIdentity.CognitoUserAttribute({ Name: 'email', Value: email })
+          ];
+
+          userPool.signUp(email, password, attributeList, null, (err, result) => {
+            if (err) { alert('Erreur Cognito : ' + err.message); return; }
+            showToast('✅ Compte Cognito créé ! Un code de vérification a été envoyé sur ' + email);
+          });
+        }
+
+        function loginCognito() {
+          const email = document.getElementById('cognito-email').value.trim();
+          const password = document.getElementById('cognito-password').value;
+          if (!email || !password) { alert('Veuillez saisir votre e-mail et mot de passe.'); return; }
+
+          const authDetails = new AmazonCognitoIdentity.AuthenticationDetails({ Username: email, Password: password });
+          const cognitoUser = new AmazonCognitoIdentity.CognitoUser({ Username: email, Pool: userPool });
+
+          cognitoUser.authenticateUser(authDetails, {
+            onSuccess: (result) => {
+              const jwtToken = result.getIdToken().getJwtToken();
+              sessionStorage.setItem('jwt_token', jwtToken);
+              document.getElementById('customer-email').value = email;
+              document.getElementById('cognito-status').innerHTML = 'Statut : <strong style="color:var(--green)">Connecté avec ' + email + ' (Token JWT actif)</strong>';
+              showToast('✅ Session Cognito active !');
+            },
+            onFailure: (err) => { alert('Erreur de connexion : ' + err.message); }
+          });
+        }
   </script>
+  <!-- À INSÉRER JUSTE APRÈS LA BALISE <script> DU HTML_PAGE -->
+    <script src="https://cdn.jsdelivr.net/npm/amazon-cognito-identity-js@6.3.6/dist/amazon-cognito-identity.min.js"></script>
+    <script>
+      window.APP_CONFIG = {
+        userPoolId: '""" + USER_POOL_ID + """',
+        userPoolClientId: '""" + USER_POOL_CLIENT_ID + """',
+        region: '""" + REGION + """'
+      };
+
+      const poolData = {
+        UserPoolId: window.APP_CONFIG.userPoolId,
+        ClientId: window.APP_CONFIG.userPoolClientId
+      };
+      const userPool = new AmazonCognitoIdentity.CognitoUserPool(poolData);
 </body>
 </html>
 """

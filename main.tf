@@ -30,6 +30,11 @@ data "aws_ami" "al2023" {
     values = ["hvm"]
   }
 }
+# 0. Service Cognito
+module "auth_cognito" {
+  source       = "./modules/00-auth-cognito"
+  project_name = var.project_name
+}
 
 # 1. Base de données DynamoDB (Catalogue & Commandes) + Bucket S3 (Factures PDF)
 module "database_dynamodb" {
@@ -82,6 +87,8 @@ module "frontend_ec2" {
   spot_launch_template_id         = module.batch_ec2_spot.spot_launch_template_id
   spot_worker_role_arn            = module.batch_ec2_spot.spot_worker_role_arn
   enable_autoscaling_alb          = var.enable_autoscaling_alb
+  user_pool_id        = module.auth_cognito.user_pool_id
+  user_pool_client_id = module.auth_cognito.user_pool_client_id
 }
 
 # 5. Worker Batch EC2 Spot (Périodique + lancement à la demande + auto-destruction)
