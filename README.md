@@ -31,15 +31,15 @@ Le site doit être **hautement disponible**. Adapter votre solution pour **AWS F
 
 ---
 
-## 2. Architecture Retenue (Hybride Free Tier à 0,00 €)
+## 2. Architecture du Projet (Hybride Free Tier à 0,00 €)
 
-L'architecture réunit l'élasticité IaaS (Auto Scaling Group EC2 pour le site web), la réactivité Serverless (AWS Lambda + DynamoDB pour la prise de commande synchrone) et l'économie du modèle Batch asynchrone (Worker EC2 Spot éphémère).
+L'architecture réunit l'élasticité IaaS (EC2 Front-End + Auto Scaling Group / ALB), la réactivité Serverless (AWS Lambda + DynamoDB pour la prise de commande synchrone) et l'économie du modèle Batch asynchrone (Worker EC2 Spot éphémère).
 
 ```mermaid
 flowchart TB
     Client["Client Web (Navigateur / Mobile)"]
 
-    subgraph Front_Tier["1. Entree et Front-End Elastique (IaaS Multi-AZ)"]
+    subgraph Front_Tier["1. Module 04 : Front-End EC2 et Elasticite (IaaS)"]
         ALB["Application Load Balancer (Public Multi-AZ)"]
         subgraph ASG["Auto Scaling Group Web (min=1, desired=2, max=4)"]
             EC2_A["EC2 Web Zone A (t3.micro)"]
@@ -50,18 +50,18 @@ flowchart TB
         ALB --> EC2_A & EC2_B
     end
 
-    subgraph Serverless_Order["2. Coeur de Commande Transactionnel (Serverless)"]
+    subgraph Serverless_Order["2. Modules 01 et 03 : Lambda et DynamoDB (Serverless)"]
         Lambda["AWS Lambda: CreateOrder (Python 3.12)"]
         DDB_Catalog[("DynamoDB: Products")]
         DDB_Orders[("DynamoDB: Orders")]
     end
 
-    subgraph Messaging_Buffer["3. Decouplage, Notification et Tampon"]
+    subgraph Messaging_Buffer["3. Module 02 : Notifications SNS et File SQS"]
         SNS_Order(("Amazon SNS: OrderConfirmation"))
         SQS_Batch[["Amazon SQS: orders-batch-queue (Retention 14j)"]]
     end
 
-    subgraph Async_Spot_Batch["4. Traitement Batch Ephemere (EC2 Spot de Nuit / Batch)"]
+    subgraph Async_Spot_Batch["4. Module 05 : Worker Batch EC2 Spot et S3 PDF"]
         Spot["Instance EC2 Spot Worker (t3.micro Spot)"]
         S3_Bucket[("Amazon S3: Factures PDF et Rapports Audit")]
         SNS_Ship(("Amazon SNS: ShippingNotification"))
@@ -75,7 +75,7 @@ flowchart TB
     SNS_Order -.->|Mail client| Client
     Lambda -->|5b. Empile pour le batch| SQS_Batch
 
-    SQS_Batch -->|6. Depile la nuit ou declenchement| Spot
+    SQS_Batch -->|6. Depile la commande| Spot
     Spot -->|7a. Calcul carton S/M/L/XL et No Suivi| DDB_Orders
     Spot -->|7b. Genere Facture PDF officielle| S3_Bucket
     Spot -->|7c. Mise a jour statut: SHIPPED| DDB_Orders
@@ -86,83 +86,49 @@ flowchart TB
 
 ---
 
-## 3. Détail des Composants Techniques
+## 3. Organisation Modulaire du Projet (Les 5 Grandes Parties)
 
-### 3.1 Élasticité Front-End (Auto Scaling Group EC2)
-* **Application Load Balancer (ALB) :** Répartit les requêtes HTTP entrantes sur 2 sous-réseaux publics dans des zones de disponibilité distinctes (`eu-west-3a`, `eu-west-3b`).
-* **Auto Scaling Group (ASG) :**
-  * `min_size = 1` : Haute résilience de base.
-  * `desired_capacity = 2` : Répartition Multi-AZ active pendant les heures ouvrées / démonstration.
-  * `max_size = 4` : Capacité d'absorption automatique en cas de pic de trafic.
-* **Target Tracking Policy :** Déclenchement automatique d'instances supplémentaires si l'utilisation CPU moyenne dépasse 60 %, puis réduction automatique (*Scale-In*) dès que la charge retombe.
+Chaque partie de l'architecture possède son propre dossier dans [`modules/`](./modules/) avec son code Terraform et son **guide explicatif dédié** :
 
-### 3.2 Cœur Serverless (Prise de Commande Synchrone)
-* **AWS Lambda (`CreateOrder`) :** Code Python 3.12 gérant la validation transactionnelle du panier et la mise à jour atomique des stocks.
-* **Amazon DynamoDB :** 
-  * Table `Products` (catalogue, dimensions, poids, stocks).
-  * Table `Orders` (commandes, statuts, historique).
-  * Mode `PROVISIONED` fixé à **5 RCU / 5 WCU** (100 % *Always Free*).
-
-### 3.3 Traitement Batch Asynchrone sur EC2 Spot (Calcul Colis & Facture PDF)
-Au lieu de maintenir une VM coûteuse allumée 24h/24, une instance **EC2 Spot (`t3.micro`)** est lancée de façon éphémère (la nuit pendant 2 heures ou sur déclenchement) :
-1. **Dimensionnement automatique du colis transporteur :**
-   * Calcule le volume total (avec marge de calage de 15 %) et le poids total de la commande.
-   * Sélectionne automatiquement le format optimal parmi la grille transporteur prédéfinie :
-     * **Colis S (Petit)** : 20 x 15 x 10 cm (max 2 kg) — 4,90 € HT
-     * **Colis M (Standard)** : 40 x 30 x 20 cm (max 10 kg) — 8,90 € HT
-     * **Colis L (Volumineux)** : 60 x 40 x 40 cm (max 25 kg) — 14,90 € HT
-     * **Colis XL (Palette)** : 100 x 60 x 60 cm (> 25 kg) — 29,90 € HT
-2. **Génération de la Facture PDF officielle (`fpdf2`) :**
-   * Tableau complet des lignes d'articles, TVA 20 %, total TTC.
-   * Encadré logistique avec dimensions du carton, taux de remplissage volumétrique et numéro de suivi transporteur (`TRK-EUW3-2026-...`).
-   * Téléversement sécurisé sur **Amazon S3** avec URL pré-signée.
-3. **Mise à jour d'état & Notification d'expédition :**
-   * La commande passe de `PENDING` à `PACKAGED` puis `SHIPPED` dans DynamoDB.
-   * **Amazon SNS** envoie un e-mail au client avec son numéro de suivi transporteur et le lien de téléchargement direct de la facture.
-4. **Auto-extinction (*Scale-to-Zero*) :** Dès que la file SQS est vide, l'instance Spot s'éteint pour ne pas consommer de budget.
+| Dossier Module | Services AWS Gérés | Rôle & Connexions | Documentation Détaillée |
+| :--- | :--- | :--- | :--- |
+| **[`modules/01-database-dynamodb/`](./modules/01-database-dynamodb)** | **DynamoDB** (`products`, `orders`) + **Amazon S3** (`invoices`) | Stocke le catalogue produits (pré-rempli), l'historique des commandes et les factures PDF. Configuré en mode `PROVISIONED` (5 RCU / 5 WCU = 100 % *Always Free*). | [EXPLICATIONS_DYNAMODB_S3.md](./modules/01-database-dynamodb/EXPLICATIONS_DYNAMODB_S3.md) |
+| **[`modules/02-messaging-sns-sqs/`](./modules/02-messaging-sns-sqs)** | **Amazon SNS** (2 Topics) + **Amazon SQS** (File batch) | Envoie les notifications e-mail en temps réel (SNS) et conserve les commandes en attente jusqu'à 14 jours (SQS) pour découpler la Lambda du Worker EC2 Spot. | [EXPLICATIONS_SNS_SQS.md](./modules/02-messaging-sns-sqs/EXPLICATIONS_SNS_SQS.md) |
+| **[`modules/03-serverless-lambda/`](./modules/03-serverless-lambda)** | **AWS Lambda** (`create-order`) + **IAM** | Appelée par le Front-End EC2 lors d'un achat : décrémente le stock dans DynamoDB, crée la commande (`PENDING`), notifie SNS et pousse dans SQS. | [EXPLICATIONS_LAMBDA.md](./modules/03-serverless-lambda/EXPLICATIONS_LAMBDA.md) |
+| **[`modules/04-frontend-ec2/`](./modules/04-frontend-ec2)** | **EC2 `t3.micro`** + **ALB** + **Auto Scaling Group** | Héberge l'interface web de la boutique (Catalogue, bouton Commander via Lambda, suivi en temps réel des colis et téléchargement du PDF depuis S3). | [EXPLICATIONS_FRONTEND_EC2.md](./modules/04-frontend-ec2/EXPLICATIONS_FRONTEND_EC2.md) |
+| **[`modules/05-batch-ec2-spot/`](./modules/05-batch-ec2-spot)** | **EC2 Spot `t3.micro`** + **FPDF2** | Dépile SQS, calcule le carton transporteur optimal (`Colis S, M, L, XL`), génère la facture PDF sur S3, passe la commande à `SHIPPED` dans DynamoDB et envoie le N° de suivi via SNS. | [EXPLICATIONS_BATCH_SPOT.md](./modules/05-batch-ec2-spot/EXPLICATIONS_BATCH_SPOT.md) |
 
 ---
 
 ## 4. Analyse FinOps & Seuil de Rentabilité (Break-Even Point)
 
 ### Comparatif des coûts (Région eu-west-3 Paris)
-
 * **Coût de l'EC2 Spot en batch éphémère (2h / nuit = 60h / mois) :**
   * Calcul Spot `t3.micro` : 60 h x 0,0031 $/h = **0,186 $/mois**
   * Disque EBS `gp3` (8 Go) : **0,70 $/mois**
   * **Total mensuel fixe du worker : environ 0,89 $/mois**
-
 * **Coût sur AWS Lambda (génération PDF 3s à 512 Mo de RAM) :**
   * Environ **0,0000202 $ par commande**
 
 ### Seuil de rentabilité mathématique
 * `Seuil = 0,89 $ / 0,0000202 $` = **environ 44 000 commandes / mois** (~1 450 commandes / jour)
 * **En dessous de 44 000 commandes/mois :** Le Serverless (Lambda) est le plus économique, et les 266 000 premières exécutions sont couvertes à **0,00 €** par l'offre *Always Free* (400 000 Go-secondes).
-* **Au-delà de 44 000 commandes/mois :** L'EC2 Spot éphémère est nettement plus avantageux (-75 % à 200 000 commandes). De plus, elle s'affranchit de la limite stricte des **15 minutes d'exécution maximum** imposée par AWS Lambda pour les très gros traitements par lots.
+* **Au-delà de 44 000 commandes/mois :** L'EC2 Spot éphémère est nettement plus avantageuse (-75 % à 200 000 commandes) et s'affranchit de la limite stricte des **15 minutes d'exécution maximum** imposée par AWS Lambda.
 
 ---
 
-## 5. Structure du Dépôt & Déploiement
+## 5. Commandes de Déploiement & Destruction (Environnement Éphémère)
 
-```text
-.
-├── README.md                          # Documentation complète et architecture
-├── ProjetAWS_FISA2026_RBE.pdf         # Sujet officiel du projet
-└── poc-spot-pdf/                      # PoC Terraform validé sur AWS
-    ├── main.tf                        # Configuration IaC (S3, DynamoDB, SQS, SNS, EC2 Spot)
-    ├── worker.py.tftpl                # Worker Python (PDF + Colisage transporteur)
-    ├── facture_CMD-2026-001.pdf       # Facture PDF générée lors du test réel sur AWS
-    └── report_CMD-2026-001.json       # Rapport d'audit généré sur S3
-```
+À la racine du dépôt :
 
-### Déploiement et Destruction du PoC
 ```powershell
-cd poc-spot-pdf
-
-# Déploiement complet sur AWS
+# 1. Initialiser les modules et providers Terraform
 terraform init
+
+# 2. Vérifier la syntaxe et déployer toute l'architecture connectée
+terraform validate
 terraform apply -auto-approve
 
-# Destruction propre (Garantie 0,00 €)
+# 3. Détruire intégralement l'infrastructure après les tests (Garantie 0,00 €)
 terraform destroy -auto-approve
 ```

@@ -1,0 +1,266 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+import json
+import urllib.request
+from decimal import Decimal
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import boto3
+
+REGION = "${region}"
+PRODUCTS_TABLE = "${products_table}"
+ORDERS_TABLE = "${orders_table}"
+INVOICES_BUCKET = "${invoices_bucket}"
+LAMBDA_NAME = "${lambda_name}"
+
+
+class DecimalEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, Decimal):
+            return float(obj) if obj % 1 != 0 else int(obj)
+        return super().default(obj)
+
+
+def get_instance_id():
+    try:
+        req = urllib.request.Request(
+            "http://169.254.169.254/latest/api/token",
+            headers={"X-aws-ec2-metadata-token-ttl-seconds": "60"},
+            method="PUT",
+        )
+        token = urllib.request.urlopen(req, timeout=1).read().decode()
+        req2 = urllib.request.Request(
+            "http://169.254.169.254/latest/meta-data/instance-id",
+            headers={"X-aws-ec2-metadata-token": token},
+        )
+        return urllib.request.urlopen(req2, timeout=1).read().decode()
+    except Exception:
+        return "ec2-front"
+
+
+INSTANCE_ID = get_instance_id()
+
+HTML_PAGE = """<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CloudShop AWS — Boutique E-Commerce (FISA 2026)</title>
+  <style>
+    :root {
+      --navy: #232f3e;
+      --orange: #ff9900;
+      --bg: #f8fafc;
+      --card: #ffffff;
+      --text: #0f172a;
+      --muted: #64748b;
+      --green: #16a34a;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); padding-bottom: 3rem; }
+    header { background: var(--navy); color: white; padding: 1.4rem 2rem; border-bottom: 4px solid var(--orange); }
+    .wrap { max-width: 1080px; margin: 0 auto; }
+    .badge { background: var(--orange); color: #111; font-size: 0.78rem; font-weight: 700; padding: 0.2rem 0.6rem; border-radius: 99px; display: inline-block; margin-bottom: 0.4rem; }
+    h1 { font-size: 1.6rem; }
+    .meta { color: #cbd5e1; font-size: 0.9rem; margin-top: 0.2rem; }
+    .container { max-width: 1080px; margin: 1.8rem auto; padding: 0 1rem; }
+    .card { background: var(--card); border-radius: 10px; padding: 1.4rem; border: 1px solid #e2e8f0; margin-bottom: 1.5rem; box-shadow: 0 2px 4px rgba(0,0,0,0.04); }
+    h2 { font-size: 1.2rem; color: var(--navy); margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center; }
+    .products-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; }
+    .prod-box { border: 1px solid #cbd5e1; border-radius: 8px; padding: 1rem; background: #fcfcfd; display: flex; flex-direction: column; justify-content: space-between; }
+    .prod-title { font-weight: 700; font-size: 1.05rem; margin-bottom: 0.4rem; }
+    .prod-meta { font-size: 0.86rem; color: var(--muted); margin-bottom: 0.8rem; }
+    .price { font-size: 1.25rem; font-weight: 800; color: var(--navy); }
+    button { background: var(--orange); color: #111; border: none; font-weight: 700; padding: 0.6rem 1.1rem; border-radius: 6px; cursor: pointer; font-size: 0.92rem; }
+    button:hover { background: #e68a00; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-secondary { background: var(--navy); color: white; font-size: 0.85rem; padding: 0.45rem 0.9rem; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; margin-top: 0.5rem; }
+    th, td { border: 1px solid #e2e8f0; padding: 0.65rem 0.75rem; text-align: left; }
+    th { background: #f1f5f9; color: var(--navy); }
+    .tag-pending { background: #fef3c7; color: #b45309; padding: 0.2rem 0.55rem; border-radius: 99px; font-weight: 700; font-size: 0.78rem; }
+    .tag-shipped { background: #dcfce7; color: #15803d; padding: 0.2rem 0.55rem; border-radius: 99px; font-weight: 700; font-size: 0.78rem; }
+    a.pdf-link { color: #0284c7; font-weight: 700; text-decoration: none; }
+    a.pdf-link:hover { text-decoration: underline; }
+    #toast { display: none; padding: 0.9rem 1.2rem; border-radius: 8px; margin-bottom: 1.2rem; background: #dcfce7; border: 1px solid #16a34a; color: #14532d; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <span class="badge">Projet AWS FISA 2026 — Architecture Complète Connectée</span>
+      <h1>CloudShop AWS — Catalogue, Commandes Serverless & Batch EC2 Spot</h1>
+      <p class="meta">Serveur Front-End EC2 : <strong>""" + INSTANCE_ID + """</strong> | Région : <strong>""" + REGION + """</strong> | Lambda : <strong>""" + LAMBDA_NAME + """</strong></p>
+    </div>
+  </header>
+
+  <div class="container">
+    <div id="toast"></div>
+
+    <div class="card">
+      <h2>
+        <span>1. Catalogue Produits (Table DynamoDB : <code>""" + PRODUCTS_TABLE + """</code>)</span>
+        <button class="btn-secondary" onclick="loadAll()">Rafraîchir</button>
+      </h2>
+      <div id="products-list" class="products-grid">Chargement du catalogue...</div>
+    </div>
+
+    <div class="card">
+      <h2>
+        <span>2. Suivi des Commandes, Colisage & Factures PDF (DynamoDB + SQS + EC2 Spot + S3)</span>
+        <button class="btn-secondary" onclick="loadOrders()">Actualiser les statuts</button>
+      </h2>
+      <p style="font-size: 0.88rem; color: var(--muted); margin-bottom: 0.8rem;">
+        Lorsqu'une commande est passée, la <strong>Lambda</strong> l'enregistre au statut <code>PENDING</code>, envoie un mail <strong>SNS</strong> et la place dans <strong>SQS</strong>. Le <strong>Worker EC2 Spot</strong> dépile automatiquement la file SQS toutes les quelques secondes, calcule le carton transporteur (<code>S, M, L, XL</code>), génère la <strong>facture PDF sur S3</strong> et passe le statut à <code>SHIPPED</code> avec son numéro de suivi.
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>N° Commande</th>
+            <th>Article commandé</th>
+            <th>Statut</th>
+            <th>Colis Transporteur (EC2 Spot)</th>
+            <th>N° de Suivi (SNS)</th>
+            <th>Facture PDF (Amazon S3)</th>
+          </tr>
+        </thead>
+        <tbody id="orders-body">
+          <tr><td colspan="6">Chargement des commandes...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    async function loadProducts() {
+      const res = await fetch('/api/products');
+      const items = await res.json();
+      const container = document.getElementById('products-list');
+      container.innerHTML = items.map(p => `
+        <div class="prod-box">
+          <div>
+            <div class="prod-title">$${p.name}</div>
+            <div class="prod-meta">
+              Réf : <code>$${p.product_id}</code><br>
+              Dimensions : $${p.dims_cm} cm | Poids : $${p.weight_kg} kg<br>
+              Stock disponible : <strong>$${p.stock}</strong>
+            </div>
+          </div>
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-top:0.6rem;">
+            <span class="price">$${Number(p.price_eur).toFixed(2)} € HT</span>
+            <button onclick="orderProduct('$${p.product_id}', this)" $${p.stock <= 0 ? 'disabled' : ''}>
+              Commander (Lambda)
+            </button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    async function loadOrders() {
+      const res = await fetch('/api/orders');
+      const orders = await res.json();
+      const tbody = document.getElementById('orders-body');
+      if (!orders.length) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#64748b;">Aucune commande pour le moment. Cliquez sur "Commander" ci-dessus !</td></tr>';
+        return;
+      }
+      tbody.innerHTML = orders.map(o => `
+        <tr>
+          <td><strong>$${o.order_id}</strong><br><span style="font-size:0.78rem;color:#64748b;">$${o.created_at || ''}</span></td>
+          <td>$${o.product_summary || '-'}</td>
+          <td><span class="$${o.status === 'SHIPPED' ? 'tag-shipped' : 'tag-pending'}">$${o.status}</span></td>
+          <td>$${o.carrier_box ? `$${o.carrier_box}<br><small>$${o.box_dimensions || ''} ($${o.fill_rate_percent || 0}% rempli)</small>` : '<em>En attente du batch EC2 Spot...</em>'}</td>
+          <td><code>$${o.tracking_number || 'En cours...'}</code></td>
+          <td>$${o.pdf_url ? `<a class="pdf-link" href="$${o.pdf_url}" target="_blank">📄 Ouvrir la Facture PDF</a>` : '<em>Génération en cours...</em>'}</td>
+        </tr>
+      `).join('');
+    }
+
+    async function orderProduct(productId, btn) {
+      btn.disabled = true;
+      const oldText = btn.textContent;
+      btn.textContent = 'Appel Lambda...';
+      try {
+        const res = await fetch('/api/order', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ product_id: productId, qty: 1 })
+        });
+        const data = await res.json();
+        const toast = document.getElementById('toast');
+        toast.style.display = 'block';
+        toast.textContent = `✅ Commande $${data.order_id} créée via AWS Lambda ! Traitement par le Worker EC2 Spot en cours...`;
+        await loadAll();
+      } finally {
+        btn.disabled = false;
+        btn.textContent = oldText;
+      }
+    }
+
+    async function loadAll() {
+      await Promise.all([loadProducts(), loadOrders()]);
+    }
+
+    loadAll();
+    setInterval(loadOrders, 5000);
+  </script>
+</body>
+</html>
+"""
+
+
+class ShopHandler(BaseHTTPRequestHandler):
+    def _send_json(self, code, payload):
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(json.dumps(payload, cls=DecimalEncoder).encode("utf-8"))
+
+    def do_GET(self):
+        if self.path in ("/", "/index.html"):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(HTML_PAGE.encode("utf-8"))
+        elif self.path == "/api/products":
+            ddb = boto3.resource("dynamodb", region_name=REGION)
+            items = ddb.Table(PRODUCTS_TABLE).scan().get("Items", [])
+            items.sort(key=lambda x: x.get("product_id", ""))
+            self._send_json(200, items)
+        elif self.path == "/api/orders":
+            ddb = boto3.resource("dynamodb", region_name=REGION)
+            s3 = boto3.client("s3", region_name=REGION)
+            orders = ddb.Table(ORDERS_TABLE).scan().get("Items", [])
+            orders.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+            for o in orders:
+                if o.get("invoice_s3_key"):
+                    o["pdf_url"] = s3.generate_presigned_url(
+                        "get_object",
+                        Params={"Bucket": INVOICES_BUCKET, "Key": o["invoice_s3_key"]},
+                        ExpiresIn=3600,
+                    )
+            self._send_json(200, orders)
+        elif self.path == "/health":
+            self._send_json(200, {"status": "healthy", "instance": INSTANCE_ID})
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def do_POST(self):
+        if self.path == "/api/order":
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length).decode("utf-8")) if length > 0 else {}
+            lmb = boto3.client("lambda", region_name=REGION)
+            resp = lmb.invoke(
+                FunctionName=LAMBDA_NAME,
+                InvocationType="RequestResponse",
+                Payload=json.dumps(body),
+            )
+            result = json.loads(resp["Payload"].read().decode("utf-8"))
+            self._send_json(200, result)
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+
+if __name__ == "__main__":
+    HTTPServer(("0.0.0.0", 80), ShopHandler).serve_forever()

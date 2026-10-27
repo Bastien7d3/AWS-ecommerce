@@ -17,9 +17,8 @@ provider "aws" {
 
   default_tags {
     tags = {
-      Project     = "CloudShop-FISA2026"
-      Environment = "PoC-Front-Lambda"
-      ManagedBy   = "Terraform"
+      Project   = "CloudShop-FISA2026"
+      ManagedBy = "Terraform"
     }
   }
 }

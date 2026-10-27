@@ -1,0 +1,273 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Worker Batch EC2 Spot - CloudShop FISA 2026
+Connecte a :
+- Amazon SQS (depile les commandes creees par la Lambda)
+- Amazon S3 (genere et stocke les factures PDF + rapports d'audit JSON)
+- Amazon DynamoDB (passe le statut de PENDING a PACKAGED puis SHIPPED)
+- Amazon SNS (envoie le numero de suivi transporteur et le lien PDF au client)
+"""
+
+import json
+import time
+import uuid
+import urllib.request
+from datetime import datetime, timezone
+import boto3
+from fpdf import FPDF
+
+REGION = "${region}"
+SQS_QUEUE_URL = "${sqs_queue_url}"
+S3_BUCKET = "${s3_bucket}"
+DDB_ORDERS_TABLE = "${orders_table}"
+SNS_SHIPPING_ARN = "${sns_shipping_arn}"
+
+CARRIER_BOXES = [
+    {"code": "COLIS_S",  "label": "Colis S (Petit)",      "dims": (20, 15, 10),  "max_vol": 3000,   "max_weight": 2.0,   "shipping_cost": 4.90},
+    {"code": "COLIS_M",  "label": "Colis M (Standard)",   "dims": (40, 30, 20),  "max_vol": 24000,  "max_weight": 10.0,  "shipping_cost": 8.90},
+    {"code": "COLIS_L",  "label": "Colis L (Volumineux)", "dims": (60, 40, 40),  "max_vol": 96000,  "max_weight": 25.0,  "shipping_cost": 14.90},
+    {"code": "COLIS_XL", "label": "Colis XL (Palette)",   "dims": (100, 60, 60), "max_vol": 360000, "max_weight": 100.0, "shipping_cost": 29.90},
+]
+
+
+def select_carrier_box(items):
+    raw_volume_cm3 = 0.0
+    total_weight_kg = 0.0
+    max_single_dim = 0.0
+
+    for item in items:
+        qty = int(item.get("qty", 1))
+        l, w, h = item.get("dims_cm", [10, 10, 5])
+        weight = float(item.get("weight_kg", 0.5))
+        raw_volume_cm3 += (l * w * h) * qty
+        total_weight_kg += weight * qty
+        max_single_dim = max(max_single_dim, max(l, w, h))
+
+    padded_volume_cm3 = raw_volume_cm3 * 1.15
+
+    selected = CARRIER_BOXES[-1]
+    for box in CARRIER_BOXES:
+        if (padded_volume_cm3 <= box["max_vol"]
+                and total_weight_kg <= box["max_weight"]
+                and max_single_dim <= max(box["dims"])):
+            selected = box
+            break
+
+    fill_rate = min(100.0, round((padded_volume_cm3 / selected["max_vol"]) * 100, 1))
+    return {
+        "box_code": selected["code"],
+        "box_label": selected["label"],
+        "box_dimensions_cm": f"{selected['dims'][0]}x{selected['dims'][1]}x{selected['dims'][2]} cm",
+        "padded_volume_cm3": round(padded_volume_cm3, 1),
+        "fill_rate_percent": fill_rate,
+        "total_weight_kg": round(total_weight_kg, 2),
+        "shipping_cost_eur": selected["shipping_cost"],
+    }
+
+
+class InvoicePDF(FPDF):
+    def header(self):
+        self.set_fill_color(35, 47, 62)
+        self.rect(0, 0, 210, 32, "F")
+        self.set_text_color(255, 255, 255)
+        self.set_font("Helvetica", "B", 18)
+        self.set_xy(12, 8)
+        self.cell(120, 10, "CLOUDSHOP AWS - FACTURE & COLISAGE", border=0)
+        self.set_font("Helvetica", "", 10)
+        self.set_xy(12, 18)
+        self.cell(120, 8, "Projet FISA 2026 - Genere par Worker Batch EC2 Spot (eu-west-3)", border=0)
+        self.ln(22)
+
+    def footer(self):
+        self.set_y(-18)
+        self.set_font("Helvetica", "I", 8)
+        self.set_text_color(110, 110, 110)
+        self.cell(0, 10, f"CloudShop AWS Free Tier - Page {self.page_no()}", align="C")
+
+
+def generate_invoice_pdf(order, packing_info, tracking_number, instance_id, output_path):
+    pdf = InvoicePDF()
+    pdf.add_page()
+    pdf.set_text_color(30, 30, 30)
+
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(100, 8, f"Commande N° : {order['order_id']}")
+    pdf.cell(90, 8, f"Date : {datetime.now(timezone.utc).strftime('%d/%m/%Y %H:%M UTC')}", ln=True, align="R")
+
+    pdf.set_font("Helvetica", "", 10)
+    pdf.cell(100, 6, f"Client : {order.get('customer_name', 'Client CloudShop')}")
+    pdf.cell(90, 6, f"Instance EC2 Spot : {instance_id}", ln=True, align="R")
+    pdf.cell(100, 6, f"Destination : {order.get('shipping_address', 'Paris, France')}", ln=True)
+    pdf.ln(6)
+
+    pdf.set_fill_color(255, 153, 0)
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.cell(68, 8, " Article", border=1, fill=True)
+    pdf.cell(32, 8, "Dims (cm)", border=1, fill=True, align="C")
+    pdf.cell(22, 8, "Poids u.", border=1, fill=True, align="C")
+    pdf.cell(16, 8, "Qte", border=1, fill=True, align="C")
+    pdf.cell(26, 8, "Prix HT", border=1, fill=True, align="R")
+    pdf.cell(26, 8, "Total HT", border=1, fill=True, align="R", ln=True)
+
+    pdf.set_text_color(30, 30, 30)
+    pdf.set_font("Helvetica", "", 9)
+    total_ht = 0.0
+
+    for item in order.get("items", []):
+        qty = int(item.get("qty", 1))
+        unit_price = float(item.get("price_eur", 0.0))
+        line_ht = qty * unit_price
+        total_ht += line_ht
+        dims = item.get("dims_cm", [10, 10, 5])
+        dims_str = f"{dims[0]}x{dims[1]}x{dims[2]}"
+
+        pdf.cell(68, 8, f" {item.get('name', 'Produit')}", border=1)
+        pdf.cell(32, 8, dims_str, border=1, align="C")
+        pdf.cell(22, 8, f"{item.get('weight_kg', 0.5)} kg", border=1, align="C")
+        pdf.cell(16, 8, str(qty), border=1, align="C")
+        pdf.cell(26, 8, f"{unit_price:.2f} EUR", border=1, align="R")
+        pdf.cell(26, 8, f"{line_ht:.2f} EUR", border=1, align="R", ln=True)
+
+    shipping_ht = packing_info["shipping_cost_eur"]
+    grand_ht = total_ht + shipping_ht
+    tva = grand_ht * 0.20
+    ttc = grand_ht + tva
+
+    pdf.ln(3)
+    pdf.set_font("Helvetica", "", 10)
+    pdf.cell(138, 7, "Sous-total articles HT :", align="R")
+    pdf.cell(52, 7, f"{total_ht:.2f} EUR", border=1, align="R", ln=True)
+    pdf.cell(138, 7, f"Frais de port ({packing_info['box_label']}) HT :", align="R")
+    pdf.cell(52, 7, f"{shipping_ht:.2f} EUR", border=1, align="R", ln=True)
+    pdf.cell(138, 7, "TVA (20%) :", align="R")
+    pdf.cell(52, 7, f"{tva:.2f} EUR", border=1, align="R", ln=True)
+
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.set_fill_color(240, 244, 248)
+    pdf.cell(138, 9, "TOTAL TTC A PAYER :", align="R")
+    pdf.cell(52, 9, f"{ttc:.2f} EUR", border=1, fill=True, align="R", ln=True)
+
+    pdf.ln(8)
+    pdf.set_fill_color(235, 245, 251)
+    pdf.set_draw_color(41, 128, 185)
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.cell(190, 9, "  FICHE LOGISTIQUE TRANSPORTEUR & SUIVI D'EXPEDITION (CALCUL EC2 SPOT)", border=1, fill=True, ln=True)
+
+    pdf.set_font("Helvetica", "", 10)
+    pdf.cell(95, 7, f"  Format de carton retenu : {packing_info['box_label']}", border="L")
+    pdf.cell(95, 7, f"Dimensions carton : {packing_info['box_dimensions_cm']}", border="R", ln=True)
+    pdf.cell(95, 7, f"  Volume articles (+15% calage) : {packing_info['padded_volume_cm3']} cm3", border="L")
+    pdf.cell(95, 7, f"Taux de remplissage du carton : {packing_info['fill_rate_percent']} %", border="R", ln=True)
+    pdf.cell(95, 7, f"  Poids total du colis : {packing_info['total_weight_kg']} kg", border="L")
+    pdf.cell(95, 7, "Statut de la commande : SHIPPED (Expediee)", border="R", ln=True)
+
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.cell(190, 9, f"  NUMERO DE SUIVI TRANSPORTEUR : {tracking_number}", border="LBR", fill=True, ln=True)
+
+    pdf.output(output_path)
+    return round(ttc, 2)
+
+
+def get_instance_id():
+    try:
+        req = urllib.request.Request(
+            "http://169.254.169.254/latest/api/token",
+            headers={"X-aws-ec2-metadata-token-ttl-seconds": "60"},
+            method="PUT",
+        )
+        token = urllib.request.urlopen(req, timeout=1).read().decode()
+        req2 = urllib.request.Request(
+            "http://169.254.169.254/latest/meta-data/instance-id",
+            headers={"X-aws-ec2-metadata-token": token},
+        )
+        return urllib.request.urlopen(req2, timeout=1).read().decode()
+    except Exception:
+        return "ec2-spot-worker"
+
+
+def main():
+    sqs = boto3.client("sqs", region_name=REGION)
+    s3 = boto3.client("s3", region_name=REGION)
+    ddb = boto3.resource("dynamodb", region_name=REGION).Table(DDB_ORDERS_TABLE)
+    sns = boto3.client("sns", region_name=REGION)
+    instance_id = get_instance_id()
+
+    print(f"[Spot Worker {instance_id}] En ecoute de la file SQS {SQS_QUEUE_URL}...")
+
+    while True:
+        try:
+            resp = sqs.receive_message(
+                QueueUrl=SQS_QUEUE_URL,
+                MaxNumberOfMessages=5,
+                WaitTimeSeconds=10,
+            )
+            messages = resp.get("Messages", [])
+            if not messages:
+                continue
+
+            for msg in messages:
+                order = json.loads(msg["Body"])
+                order_id = order["order_id"]
+
+                packing = select_carrier_box(order.get("items", []))
+                tracking_number = f"TRK-EUW3-2026-{uuid.uuid4().hex[:6].upper()}"
+
+                local_pdf = f"/tmp/facture_{order_id}.pdf"
+                total_ttc = generate_invoice_pdf(order, packing, tracking_number, instance_id, local_pdf)
+
+                s3_key = f"invoices/facture_{order_id}.pdf"
+                s3.upload_file(local_pdf, S3_BUCKET, s3_key, ExtraArgs={"ContentType": "application/pdf"})
+
+                presigned_url = s3.generate_presigned_url(
+                    "get_object",
+                    Params={"Bucket": S3_BUCKET, "Key": s3_key},
+                    ExpiresIn=86400,
+                )
+
+                processed_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+                ddb.update_item(
+                    Key={"order_id": order_id},
+                    UpdateExpression=(
+                        "SET #s = :s, carrier_box = :b, box_dimensions = :d, "
+                        "total_weight_kg = :w, tracking_number = :t, invoice_s3_key = :k, "
+                        "processed_by_spot = :i, processed_at = :p, fill_rate_percent = :f"
+                    ),
+                    ExpressionAttributeNames={"#s": "status"},
+                    ExpressionAttributeValues={
+                        ":s": "SHIPPED",
+                        ":b": packing["box_label"],
+                        ":d": packing["box_dimensions_cm"],
+                        ":w": str(packing["total_weight_kg"]),
+                        ":t": tracking_number,
+                        ":k": s3_key,
+                        ":i": instance_id,
+                        ":p": processed_at,
+                        ":f": str(packing["fill_rate_percent"]),
+                    },
+                )
+
+                sns.publish(
+                    TopicArn=SNS_SHIPPING_ARN,
+                    Subject=f"[CloudShop] Commande {order_id} expediee ! Suivi : {tracking_number}",
+                    Message=(
+                        f"Bonjour {order.get('customer_name', 'Client')},\n\n"
+                        f"Votre commande {order_id} a ete emballee et expediee (Worker EC2 Spot : {instance_id}).\n"
+                        f"- Statut : SHIPPED\n"
+                        f"- Numero de suivi : {tracking_number}\n"
+                        f"- Colis retenu : {packing['box_label']} ({packing['box_dimensions_cm']})\n"
+                        f"- Total TTC : {total_ttc:.2f} EUR\n\n"
+                        f"Facture PDF : {presigned_url}\n"
+                    ),
+                )
+
+                sqs.delete_message(QueueUrl=SQS_QUEUE_URL, ReceiptHandle=msg["ReceiptHandle"])
+                print(f"[Spot Worker] Commande {order_id} -> SHIPPED ({tracking_number})")
+        except Exception as exc:
+            print(f"[Spot Worker] Erreur : {exc}")
+            time.sleep(3)
+
+
+if __name__ == "__main__":
+    main()
