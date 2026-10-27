@@ -52,58 +52,133 @@ HTML_PAGE = """<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CloudShop AWS — Boutique E-Commerce (FISA 2026)</title>
+  <title>ATELIER NOIR — Soins masculins d’exception</title>
   <style>
     :root {
-      --navy: #232f3e;
-      --orange: #ff9900;
-      --bg: #f8fafc;
-      --card: #ffffff;
-      --text: #0f172a;
-      --muted: #64748b;
-      --green: #16a34a;
-      --red: #dc2626;
+      --ink: #171815;
+      --ink-soft: #292a25;
+      --ivory: #f5f2eb;
+      --paper: #fffdf8;
+      --bronze: #b49a70;
+      --muted: #77766f;
+      --line: #ded9ce;
+      --green: #32745b;
+      --red: #b7483f;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); padding-bottom: 3rem; }
-    header { background: var(--navy); color: white; padding: 1.4rem 2rem; border-bottom: 4px solid var(--orange); }
-    .wrap { max-width: 1120px; margin: 0 auto; }
-    .badge { background: var(--orange); color: #111; font-size: 0.78rem; font-weight: 700; padding: 0.2rem 0.6rem; border-radius: 99px; display: inline-block; margin-bottom: 0.4rem; }
-    h1 { font-size: 1.6rem; }
-    .meta { color: #cbd5e1; font-size: 0.9rem; margin-top: 0.2rem; }
-    .container { max-width: 1120px; margin: 1.6rem auto; padding: 0 1rem; }
-    .card { background: var(--card); border-radius: 10px; padding: 1.4rem; border: 1px solid #e2e8f0; margin-bottom: 1.4rem; box-shadow: 0 2px 4px rgba(0,0,0,0.04); }
-    .card-spot { border: 2px solid #0284c7; background: #f0f9ff; }
-    h2 { font-size: 1.18rem; color: var(--navy); margin-bottom: 0.8rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem; }
-    .products-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; }
-    .prod-box { border: 1px solid #cbd5e1; border-radius: 8px; padding: 1rem; background: #fcfcfd; display: flex; flex-direction: column; justify-content: space-between; }
-    .prod-title { font-weight: 700; font-size: 1.05rem; margin-bottom: 0.4rem; }
-    .prod-meta { font-size: 0.86rem; color: var(--muted); margin-bottom: 0.8rem; }
-    .price { font-size: 1.25rem; font-weight: 800; color: var(--navy); }
-    input[type="email"], input[type="text"], input[type="password"] { padding: 0.55rem 0.8rem; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 0.92rem; width: 230px; }
-    button { background: var(--orange); color: #111; border: none; font-weight: 700; padding: 0.6rem 1.1rem; border-radius: 6px; cursor: pointer; font-size: 0.92rem; }
-    button:hover { background: #e68a00; }
-    button:disabled { opacity: 0.5; cursor: not-allowed; }
-    .btn-secondary { background: var(--navy); color: white; font-size: 0.85rem; padding: 0.45rem 0.9rem; }
-    .btn-spot { background: #0284c7; color: white; padding: 0.7rem 1.3rem; }
-    .btn-spot:hover { background: #0369a1; }
-    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; margin-top: 0.5rem; background: white; }
-    th, td { border: 1px solid #e2e8f0; padding: 0.65rem 0.75rem; text-align: left; }
-    th { background: #f1f5f9; color: var(--navy); }
-    .tag-pending { background: #fef3c7; color: #b45309; padding: 0.2rem 0.55rem; border-radius: 99px; font-weight: 700; font-size: 0.78rem; }
-    .tag-shipped { background: #dcfce7; color: #15803d; padding: 0.2rem 0.55rem; border-radius: 99px; font-weight: 700; font-size: 0.78rem; }
-    a.pdf-link { color: #0284c7; font-weight: 700; text-decoration: none; }
-    a.pdf-link:hover { text-decoration: underline; }
-    #toast { display: none; padding: 0.9rem 1.2rem; border-radius: 8px; margin-bottom: 1.2rem; background: #dcfce7; border: 1px solid #16a34a; color: #14532d; font-weight: 600; }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: Inter, "Helvetica Neue", Arial, sans-serif;
+      background: var(--ivory); color: var(--ink);
+      padding-bottom: 3rem; line-height: 1.55;
+    }
+    header {
+      background: var(--ink); color: var(--paper);
+      padding: 1.2rem 2rem 3.5rem; border-bottom: 1px solid #393a33;
+    }
+    .wrap, .container { max-width: 1180px; margin-left: auto; margin-right: auto; }
+    .brandbar { display:flex; align-items:center; justify-content:space-between; gap:1.5rem; padding-bottom:1.1rem; border-bottom:1px solid #414139; }
+    .brand { font-family: Georgia, "Times New Roman", serif; font-size:1.45rem; letter-spacing:.16em; font-weight:normal; color:var(--paper); }
+    .brand-note { font-size:.68rem; letter-spacing:.2em; color:#c5b99f; text-transform:uppercase; margin-top:.15rem; }
+    .navlinks { display:flex; gap:1.35rem; flex-wrap:wrap; }
+    .navlinks a { color:#e7e1d6; text-decoration:none; text-transform:uppercase; letter-spacing:.1em; font-size:.72rem; }
+    .navlinks a:hover { color:var(--bronze); }
+    .hero { display:grid; grid-template-columns:1.05fr .95fr; align-items:center; gap:3rem; padding:4.2rem 0 1rem; }
+    .eyebrow { color:var(--bronze); text-transform:uppercase; letter-spacing:.22em; font-size:.72rem; font-weight:700; margin-bottom:1rem; }
+    .hero h1 { font-family:Georgia, "Times New Roman", serif; font-weight:normal; font-size:clamp(2.5rem, 5vw, 4.8rem); line-height:1.03; letter-spacing:-.035em; max-width:650px; }
+    .hero-copy { color:#c9c5bb; max-width:460px; margin:1.3rem 0 1.6rem; font-size:1rem; }
+    .hero-cta { display:inline-block; padding:.9rem 1.3rem; background:var(--ivory); color:var(--ink); text-decoration:none; text-transform:uppercase; letter-spacing:.12em; font-size:.72rem; font-weight:700; }
+    .hero-cta:hover { background:var(--bronze); }
+    .hero-art { min-height:310px; background:linear-gradient(135deg,#34352f,#191a17 65%,#65543e); display:flex; flex-direction:column; justify-content:flex-end; padding:2rem; border:1px solid #4b493f; position:relative; overflow:hidden; }
+    .hero-art:before { content:""; position:absolute; width:230px; height:330px; right:16%; top:8%; border-radius:45% 45% 12% 12%; background:linear-gradient(90deg,#1d1e1a,#77705e 48%,#272821); transform:rotate(8deg); box-shadow:0 15px 45px #0008; }
+    .hero-art:after { content:""; position:absolute; width:115px; height:38px; right:calc(16% + 58px); top:4%; background:#b9a47e; transform:rotate(8deg); }
+    .hero-art-label { position:relative; z-index:1; color:#e5dccb; text-transform:uppercase; letter-spacing:.2em; font-size:.68rem; }
+    .container { padding:0 1.5rem; margin-top:2rem; }
+    .card { background:var(--paper); border:1px solid var(--line); padding:1.6rem; margin-bottom:1.4rem; box-shadow:0 8px 30px rgba(30,28,22,.025); }
+    .card-spot { border:1px solid #c5b18c; background:#f0ece3; }
+    h2 { font-family:Georgia, "Times New Roman", serif; font-size:1.65rem; font-weight:normal; color:var(--ink); margin-bottom:1rem; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:.7rem; }
+    .section-kicker { color:var(--muted); font-size:.7rem; letter-spacing:.16em; text-transform:uppercase; margin-bottom:.25rem; }
+    .products-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(225px,1fr)); gap:1rem; }
+    .category-tabs { display:flex; flex-wrap:wrap; gap:.55rem; margin:0 0 1.2rem; }
+    .category-tabs a { border:1px solid var(--line); padding:.55rem .8rem; text-decoration:none; color:var(--ink); text-transform:uppercase; letter-spacing:.09em; font-size:.68rem; }
+    .category-tabs a:hover { background:var(--ink); color:var(--paper); }
+    .product-visual { min-height:150px; display:flex; align-items:center; justify-content:center; margin:-1.2rem -1.2rem 1rem; background:radial-gradient(circle at 50% 35%,#5c584e,#242520 72%); overflow:hidden; }
+    .product-visual span { color:#d6c5a4; border:1px solid #9c8b6b; padding:1.1rem .8rem; min-width:76px; text-align:center; font-family:Georgia,serif; letter-spacing:.12em; box-shadow:0 12px 25px #0006; }
+    .cart-row { display:grid; grid-template-columns:1fr auto auto auto; gap:1rem; align-items:center; padding:.9rem 0; border-bottom:1px solid var(--line); }
+    .cart-row small { display:block;color:var(--muted); }
+    .qty-control { display:flex;align-items:center;gap:.5rem; }
+    .qty-control button { padding:.35rem .6rem; }
+    .cart-total { display:flex;justify-content:space-between;border-top:1px solid var(--line);padding-top:1rem;margin-top:1rem;font-size:1.05rem; }
+    .cart-total strong { font-family:Georgia,serif;font-size:1.35rem; }
+    .prod-box { border:1px solid var(--line); background:#fffefa; display:flex; flex-direction:column; justify-content:space-between; padding:1.2rem; min-height:225px; transition:transform .2s,border-color .2s; }
+    .prod-box:hover { transform:translateY(-3px); border-color:var(--bronze); }
+    .prod-title { font-family:Georgia, "Times New Roman", serif; font-size:1.25rem; font-weight:normal; margin-bottom:.55rem; }
+    .prod-meta { font-size:.82rem; color:var(--muted); margin-bottom:1rem; line-height:1.8; }
+    .price { font-size:1.08rem; font-weight:700; color:var(--ink); }
+    input[type="email"], input[type="text"], input[type="password"] { padding:.75rem .85rem; border:1px solid var(--line); background:#fffefa; font-size:.9rem; width:230px; border-radius:0; color:var(--ink); }
+    input:focus { outline:1px solid var(--bronze); border-color:var(--bronze); }
+    button { background:var(--ink); color:var(--paper); border:1px solid var(--ink); font-weight:600; padding:.75rem 1rem; cursor:pointer; font-size:.76rem; letter-spacing:.06em; text-transform:uppercase; transition:background .2s,color .2s; }
+    button:hover { background:var(--bronze); color:#171815; border-color:var(--bronze); }
+    button:disabled { opacity:.5; cursor:not-allowed; }
+    .btn-secondary { background:transparent; color:var(--ink); border:1px solid var(--line); font-size:.72rem; padding:.65rem .85rem; }
+    .btn-secondary:hover { background:var(--ink); color:var(--paper); border-color:var(--ink); }
+    .btn-spot { background:#746044; color:white; border-color:#746044; padding:.8rem 1.1rem; }
+    .btn-spot:hover { background:#4b3c2c; color:white; border-color:#4b3c2c; }
+    table { width:100%; border-collapse:collapse; font-size:.85rem; margin-top:.5rem; background:var(--paper); }
+    th, td { border-bottom:1px solid var(--line); padding:.8rem; text-align:left; }
+    th { background:#eee9df; color:var(--ink); font-size:.7rem; text-transform:uppercase; letter-spacing:.08em; }
+    .tag-pending { background:#f5e8cc; color:#805a20; padding:.25rem .55rem; font-weight:700; font-size:.72rem; }
+    .tag-shipped { background:#dcebe2; color:#286044; padding:.25rem .55rem; font-weight:700; font-size:.72rem; }
+    a.pdf-link { color:#746044; font-weight:700; text-decoration:none; }
+    a.pdf-link:hover { text-decoration:underline; }
+    #toast { display:none; padding:.9rem 1.2rem; margin-bottom:1.2rem; background:#e4eee7; border:1px solid #b5d1bd; color:#23563a; font-weight:600; }
+    code { overflow-wrap:anywhere; }
+    @media (max-width:760px) {
+      header { padding:1rem 1rem 2.3rem; }
+      .brandbar { align-items:flex-start; flex-direction:column; }
+      .navlinks { gap:.8rem; }
+      .hero { grid-template-columns:1fr; gap:1.5rem; padding-top:2.8rem; }
+      .hero-art { min-height:230px; }
+      .hero-art:before { width:160px; height:240px; right:18%; }
+      .hero-art:after { right:calc(18% + 40px); }
+      .container { padding:0 .8rem; margin-top:1rem; }
+      .card { padding:1rem; }
+      .products-grid { grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); }
+      .cart-row { grid-template-columns:1fr auto; gap:.5rem; }
+      table { display:block; overflow-x:auto; white-space:nowrap; }
+    }
   </style>
   <script src="https://cdn.jsdelivr.net/npm/amazon-cognito-identity-js@6.3.6/dist/amazon-cognito-identity.min.js"></script>
 </head>
 <body>
   <header>
     <div class="wrap">
-      <span class="badge">Projet AWS FISA 2026 — Architecture Modulaire Connectée</span>
-      <h1>CloudShop AWS — Boutique, Notifications SNS & Batch EC2 Spot à la demande</h1>
-      <p class="meta">Serveur Front-End EC2 : <strong>""" + INSTANCE_ID + """</strong> | Région : <strong>""" + REGION + """</strong> | Launch Template Spot : <strong>""" + SPOT_LT_ID + """</strong></p>
+      <div class="brandbar">
+        <div>
+          <div class="brand">ATELIER NOIR</div>
+          <div class="brand-note">Le soin masculin, autrement</div>
+        </div>
+        <nav class="navlinks" aria-label="Navigation principale">
+          <a href="#visage">Visage</a>
+          <a href="#barbe">Barbe</a>
+          <a href="#corps">Corps</a>
+          <a href="#parfums">Parfums</a>
+          <a href="#panier">Panier <span id="cart-count">0</span></a>
+          <a href="#account">Mon compte</a>
+        </nav>
+      </div>
+      <section class="hero">
+        <div>
+          <p class="eyebrow">L'art du soin masculin</p>
+          <h1>Le soin juste.<br>L'élégance sans effort.</h1>
+          <p class="hero-copy">Des essentiels de soin sélectionnés pour les hommes qui privilégient la qualité, la simplicité et le détail.</p>
+          <a class="hero-cta" href="#visage">Découvrir la collection&nbsp; ↘</a>
+        </div>
+        <div class="hero-art" role="img" aria-label="Visuel abstrait de flacon de soin premium">
+          <span class="hero-art-label">Essentiels contemporains · Série 01</span>
+        </div>
+      </section>
+      <p class="meta" style="margin-top:1.5rem;">Serveur EC2 : <strong>""" + INSTANCE_ID + """</strong> &nbsp;·&nbsp; Région : <strong>""" + REGION + """</strong> &nbsp;·&nbsp; Launch Template : <strong>""" + SPOT_LT_ID + """</strong></p>
     </div>
   </header>
 
@@ -111,8 +186,8 @@ HTML_PAGE = """<!DOCTYPE html>
     <div id="toast"></div>
 
     <!-- 1. IDENTIFICATION CLIENT & AUTHENTIFICATION COGNITO -->
-    <div class="card">
-      <h2><span>1. Connexion Client & Authentification (Amazon Cognito)</span></h2>
+    <div class="card" id="account">
+      <h2><span>Compte client & Authentification (Amazon Cognito)</span></h2>
       <p style="font-size: 0.88rem; color: var(--muted); margin-bottom: 0.8rem;">
         S'inscrire créera automatiquement votre compte Cognito et votre abonnement aux notifications SNS.
       </p>
@@ -126,14 +201,26 @@ HTML_PAGE = """<!DOCTYPE html>
       <p style="font-size:0.86rem; color:var(--muted);" id="cognito-status">Statut : <strong style="color:var(--red)">Non connecté (Achats bloqués)</strong></p>
     </div>
 
-    <!-- 2. CATALOGUE PRODUITS & PRISE DE COMMANDE LAMBDA -->
-    <div class="card">
-      <h2>
-        <span>2. Catalogue Produits (DynamoDB : <code>""" + PRODUCTS_TABLE + """</code>)</span>
-        <button class="btn-secondary" onclick="loadAll()">Rafraîchir</button>
-      </h2>
-      <div id="products-list" class="products-grid">Chargement du catalogue...</div>
-    </div>
+    <!-- Catalogue ATELIER NOIR : pages de catégories -->
+    <section class="card" id="collection">
+      <p class="section-kicker">La collection</p>
+      <h2><span id="category-title">Tous les essentiels</span><button class="btn-secondary" onclick="loadProducts()">Rafraîchir</button></h2>
+      <p id="category-copy" style="color:var(--muted);margin:-.4rem 0 1.3rem;">Des formules essentielles, des textures sensorielles et une routine sans superflu.</p>
+      <div class="category-tabs" aria-label="Catégories">
+        <a href="#visage">Visage</a><a href="#barbe">Barbe</a><a href="#corps">Corps</a><a href="#parfums">Parfums</a><a href="#collection">Tout voir</a>
+      </div>
+      <div id="products-list" class="products-grid">Chargement de la collection...</div>
+    </section>
+
+    <!-- Panier client -->
+    <section class="card" id="panier">
+      <p class="section-kicker">Votre sélection</p><h2>Le panier <span id="cart-subtitle" style="font: .8rem Arial;color:var(--muted);">0 article</span></h2>
+      <div id="cart-items">Votre panier est encore vide.</div>
+      <div class="cart-total"><span>Sous-total estimé</span><strong id="cart-total">0,00 €</strong></div>
+      <p style="color:var(--muted);font-size:.82rem;margin:.7rem 0 1rem;">Les commandes sont confirmées après connexion. Les articles sont envoyés au service de commande AWS existant.</p>
+      <button id="checkout-btn" onclick="checkoutCart()" disabled>Valider la commande</button>
+      <button class="btn-secondary" onclick="clearCart()" style="margin-left:.4rem;">Vider le panier</button>
+    </section>
 
     <!-- 3. PANNEAU ADMIN : LANCEMENT MANUEL / PERIODIQUE DU WORKER EC2 SPOT -->
     <div class="card card-spot">
@@ -152,9 +239,9 @@ HTML_PAGE = """<!DOCTYPE html>
     </div>
 
     <!-- 4. TABLEAU DE SUIVI DES COMMANDES & FACTURES PDF -->
-    <div class="card">
+    <div class="card" id="orders">
       <h2>
-        <span>4. Suivi des Commandes, Colisage & Factures PDF (DynamoDB + S3)</span>
+        <span>Suivi des commandes, Colisage & Factures PDF (DynamoDB + S3)</span>
         <button class="btn-secondary" onclick="loadAll()">Actualiser</button>
       </h2>
       <table>
@@ -280,30 +367,121 @@ HTML_PAGE = """<!DOCTYPE html>
       bar.innerHTML = `📦 <strong>Commandes en attente dans SQS :</strong> <strong>$${data.sqs_pending}</strong> &nbsp;|&nbsp; 🖥️ <strong>Instances EC2 Spot récentes :</strong> $${instancesHtml}`;
     }
 
+    const CATEGORY_INFO = {
+      visage: { title: 'Les soins du visage', copy: 'Nettoyants, sérums et hydratants pour une routine précise et équilibrée.' },
+      barbe: { title: 'Le rituel de la barbe', copy: 'Huiles nourrissantes, baumes disciplinants et soins pour une barbe impeccable.' },
+      corps: { title: 'Les soins du corps', copy: 'Des essentiels quotidiens aux textures sobres et aux parfums subtils.' },
+      parfums: { title: 'Les signatures olfactives', copy: 'Des accords boisés, ambrés et frais pour laisser une empreinte discrète.' },
+      collection: { title: 'Tous les essentiels', copy: 'Découvrez toute la collection ATELIER NOIR.' }
+    };
+    let allProducts = [];
+    let cart = {};
+    try { cart = JSON.parse(localStorage.getItem('atelier_noir_cart') || '{}') || {}; } catch (_) { cart = {}; }
+
+    function currentCategory() {
+      const value = (location.hash || '#collection').slice(1).toLowerCase();
+      return CATEGORY_INFO[value] ? value : 'collection';
+    }
+    function money(value) { return Number(value || 0).toLocaleString('fr-FR', {style:'currency',currency:'EUR'}); }
+    function productCategory(p) {
+      const raw = String(p.category || p.categorie || '').toLowerCase();
+      if (['visage','barbe','corps','parfums'].includes(raw)) return raw;
+      return 'autres';
+    }
     async function loadProducts() {
       const res = await fetch('/api/products');
-      const items = await res.json();
-      const container = document.getElementById('products-list');
-      container.innerHTML = items.map(p => `
-        <div class="prod-box">
-          <div>
-            <div class="prod-title">$${p.name}</div>
-            <div class="prod-meta">
-              Réf : <code>$${p.product_id}</code><br>
-              Dimensions : $${p.dims_cm} cm | Poids : $${p.weight_kg} kg<br>
-              Stock disponible : <strong>$${p.stock}</strong>
-            </div>
-          </div>
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-top:0.6rem;">
-            <span class="price">$${Number(p.price_eur).toFixed(2)} € HT</span>
-            <button onclick="orderProduct('$${p.product_id}', this)" $${p.stock <= 0 ? 'disabled' : ''}>
-              Commander (Lambda)
-            </button>
-          </div>
-        </div>
-      `).join('');
+      if (!res.ok) throw new Error('Impossible de charger le catalogue.');
+      allProducts = await res.json();
+      renderProducts();
     }
-
+    function renderProducts() {
+      const category = currentCategory();
+      const info = CATEGORY_INFO[category];
+      document.getElementById('category-title').textContent = info.title;
+      document.getElementById('category-copy').textContent = info.copy;
+      const products = allProducts.filter(p => category === 'collection' ? productCategory(p) !== 'autres' : productCategory(p) === category);
+      const container = document.getElementById('products-list');
+      if (!products.length) {
+        container.innerHTML = '<p style="color:var(--muted);padding:1rem 0;">Aucun produit dans cette catégorie. Vérifiez que le catalogue ATELIER NOIR a été chargé dans DynamoDB.</p>';
+        return;
+      }
+      container.innerHTML = products.map(p => `
+        <article class="prod-box">
+          <div>
+            <div class="product-visual"><span>ATELIER<br>NOIR</span></div>
+            <p class="section-kicker">$${productCategory(p)}</p>
+            <div class="prod-title">$${p.name}</div>
+            <div class="prod-meta">$${p.description || 'Un essentiel soigneusement sélectionné pour votre rituel quotidien.'}<br>Réf. <code>$${p.product_id}</code><br>Disponibilité : <strong>$${Number(p.stock || 0) > 0 ? 'En stock' : 'Épuisé'}</strong></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:.6rem;margin-top:.6rem;">
+            <span class="price">$${money(p.price_eur)}</span>
+            <button onclick="addToCart('$${p.product_id}')" $${Number(p.stock || 0) <= 0 ? 'disabled' : ''}>Ajouter au panier</button>
+          </div>
+        </article>`).join('');
+    }
+    function saveCart() { localStorage.setItem('atelier_noir_cart', JSON.stringify(cart)); renderCart(); }
+    function addToCart(id) {
+      const p = allProducts.find(x => x.product_id === id);
+      if (!p) return;
+      const current = Number(cart[id] || 0);
+      if (current >= Number(p.stock || 0)) { showToast('Stock maximal atteint pour ce produit.'); return; }
+      cart[id] = current + 1; saveCart(); showToast(p.name + ' ajouté au panier.');
+    }
+    function changeQty(id, delta) {
+      const p = allProducts.find(x => x.product_id === id);
+      const next = Number(cart[id] || 0) + delta;
+      if (next <= 0) delete cart[id];
+      else if (p && next <= Number(p.stock || 0)) cart[id] = next;
+      else { showToast('La quantité dépasse le stock disponible.'); return; }
+      saveCart();
+    }
+    function removeFromCart(id) { delete cart[id]; saveCart(); }
+    function clearCart() { cart = {}; saveCart(); }
+    function renderCart() {
+      const entries = Object.entries(cart).filter(([id, qty]) => qty > 0 && allProducts.some(p => p.product_id === id));
+      const count = entries.reduce((sum, [,qty]) => sum + Number(qty), 0);
+      const total = entries.reduce((sum, [id,qty]) => { const p = allProducts.find(x => x.product_id === id); return sum + Number(p.price_eur || 0) * Number(qty); }, 0);
+      document.getElementById('cart-count').textContent = count;
+      document.getElementById('cart-subtitle').textContent = count + (count > 1 ? ' articles' : ' article');
+      document.getElementById('cart-total').textContent = money(total);
+      document.getElementById('checkout-btn').disabled = entries.length === 0;
+      const box = document.getElementById('cart-items');
+      if (!entries.length) { box.innerHTML = '<p style="color:var(--muted);padding:.8rem 0;">Votre panier est encore vide. Ajoutez un essentiel depuis la collection.</p>'; return; }
+      box.innerHTML = entries.map(([id,qty]) => {
+        const p = allProducts.find(x => x.product_id === id);
+        return `<div class="cart-row"><div><strong>$${p.name}</strong><small>$${money(p.price_eur)} l’unité</small></div><div class="qty-control"><button class="btn-secondary" onclick="changeQty('$${id}',-1)" aria-label="Diminuer">−</button><strong>$${qty}</strong><button class="btn-secondary" onclick="changeQty('$${id}',1)" aria-label="Augmenter">+</button></div><strong>$${money(Number(p.price_eur)*Number(qty))}</strong><button class="btn-secondary" onclick="removeFromCart('$${id}')">Retirer</button></div>`;
+      }).join('');
+    }
+    async function checkoutCart() {
+      const jwtToken = sessionStorage.getItem('jwt_token');
+      const userEmail = sessionStorage.getItem('user_email');
+      if (!jwtToken || !userEmail) { alert('Connectez-vous avec votre compte client avant de valider votre panier.'); location.hash = '#account'; return; }
+      const btn = document.getElementById('checkout-btn');
+      const entries = Object.entries(cart).filter(([id,qty]) => qty > 0 && allProducts.some(p => p.product_id === id));
+      if (!entries.length) return;
+      btn.disabled = true; btn.textContent = 'Envoi des commandes…';
+      const customerName = document.getElementById('customer-name').value.trim() || 'Client ATELIER NOIR';
+      const completed = [];
+      try {
+        for (const [productId, qty] of entries) {
+          const res = await fetch('/api/order', {
+            method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+jwtToken},
+            body:JSON.stringify({product_id:productId,qty:Number(qty),customer_name:customerName,customer_email:userEmail})
+          });
+          const data = await res.json();
+          if (!res.ok || data.error) throw new Error(data.error || 'Erreur pendant la commande de '+productId);
+          completed.push(productId);
+        }
+        completed.forEach(id => delete cart[id]); saveCart();
+        showToast('Commande transmise au service AWS pour '+completed.length+' ligne(s). Consultez le suivi ci-dessous.');
+        await loadAll(); location.hash = '#orders';
+      } catch (e) {
+        completed.forEach(id => delete cart[id]); saveCart();
+        showToast('Une partie du panier a été envoyée. Vérifiez le suivi des commandes avant de réessayer. Détail : '+e.message);
+        await loadAll();
+      } finally { btn.disabled = false; btn.textContent = 'Valider la commande'; }
+    }
+    window.addEventListener('hashchange', renderProducts);
     async function loadOrders() {
       const res = await fetch('/api/orders');
       const orders = await res.json();
@@ -359,9 +537,16 @@ HTML_PAGE = """<!DOCTYPE html>
 
     async function loadAll() {
       await Promise.all([loadProducts(), loadOrders(), loadSpotStatus()]);
+      renderCart();
     }
+    window.addToCart = addToCart;
+    window.changeQty = changeQty;
+    window.removeFromCart = removeFromCart;
+    window.clearCart = clearCart;
+    window.checkoutCart = checkoutCart;
+    window.loadProducts = loadProducts;
 
-    loadAll();
+    loadAll().catch(e => showToast('Erreur de chargement : ' + e.message));
     setInterval(() => { loadOrders(); loadSpotStatus(); }, 5000);
   </script>
 </body>
