@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Présentation Réunion Groupe — Projet AWS E-Commerce FISA 2026</title>
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({ startOnLoad: true, theme: 'default', flowchart: { useMaxWidth: false, htmlLabels: true } });
+  </script>
+  <style>
+    :root {
+      --aws-navy: #232f3e;
+      --aws-orange: #ff9900;
+      --bg: #f4f6f9;
+      --card: #ffffff;
+      --text: #1e293b;
+      --muted: #64748b;
+      --green: #16a34a;
+      --blue: #0284c7;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.55;
+    }
+    header {
+      background: linear-gradient(135deg, #232f3e 0%, #131a22 100%);
+      color: white;
+      padding: 2.2rem 2rem;
+      border-bottom: 5px solid var(--aws-orange);
+    }
+    .container {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 1.5rem 2rem 3rem;
+    }
+    h1 { margin: 0 0 0.4rem; font-size: 1.9rem; }
+    .subtitle { color: #cbd5e1; font-size: 1rem; margin: 0; }
+    .badge {
+      display: inline-block;
+      background: var(--aws-orange);
+      color: #111;
+      font-weight: 700;
+      padding: 0.2rem 0.7rem;
+      border-radius: 999px;
+      font-size: 0.8rem;
+      margin-bottom: 0.6rem;
+    }
+    section {
+      background: var(--card);
+      border-radius: 12px;
+      padding: 1.6rem 1.8rem;
+      margin-bottom: 1.6rem;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+    }
+    h2 {
+      color: var(--aws-navy);
+      margin-top: 0;
+      border-left: 5px solid var(--aws-orange);
+      padding-left: 0.8rem;
+      font-size: 1.35rem;
+    }
+    h3 { color: var(--aws-navy); margin-top: 1.2rem; }
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+      gap: 1.2rem;
+    }
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1.2rem;
+    }
+    .box {
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      padding: 1.1rem 1.2rem;
+      background: #f8fafc;
+    }
+    .box.highlight {
+      border: 2px solid var(--aws-orange);
+      background: #fffbeb;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 0.8rem;
+      font-size: 0.93rem;
+    }
+    th, td {
+      border: 1px solid #cbd5e1;
+      padding: 0.65rem 0.8rem;
+      text-align: left;
+    }
+    th {
+      background: var(--aws-navy);
+      color: white;
+    }
+    tr:nth-child(even) { background: #f8fafc; }
+    .kpi {
+      font-size: 1.6rem;
+      font-weight: 800;
+      color: var(--aws-orange);
+    }
+    
+    /* Toolbar & Container pour le Graphe Agrandissable */
+    .graph-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0.8rem;
+      margin-bottom: 0.8rem;
+    }
+    .graph-controls {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+    }
+    .btn-ctrl {
+      background: var(--aws-navy);
+      color: white;
+      border: none;
+      padding: 0.45rem 0.85rem;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 0.88rem;
+      transition: background 0.15s ease, transform 0.1s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+    }
+    .btn-ctrl:hover {
+      background: var(--aws-orange);
+      color: #111;
+    }
+    .btn-ctrl:active { transform: scale(0.97); }
+    .btn-ctrl.fullscreen-btn {
+      background: #0f766e;
+    }
+    .btn-ctrl.fullscreen-btn:hover {
+      background: #14b8a6;
+      color: white;
+    }
+    
+    .graph-viewport {
+      width: 100%;
+      min-height: 480px;
+      max-height: 75vh;
+      overflow: auto;
+      border: 2px dashed #cbd5e1;
+      border-radius: 10px;
+      background: #ffffff;
+      padding: 1.5rem;
+      position: relative;
+      cursor: grab;
+    }
+    .graph-viewport:active { cursor: grabbing; }
+
+    /* Conteneur zoomé */
+    .zoom-wrapper {
+      transform-origin: 0 0;
+      transition: transform 0.15s ease-out;
+      display: inline-block;
+      min-width: 100%;
+    }
+    .mermaid {
+      display: flex;
+      justify-content: center;
+      min-width: 900px;
+    }
+    .mermaid svg {
+      height: auto !important;
+      max-width: none !important;
+    }
+
+    /* Mode Plein Écran */
+    .graph-section:fullscreen,
+    .graph-section:-webkit-full-screen {
+      background: #ffffff;
+      padding: 2rem;
+      overflow: auto;
+    }
+    .graph-section:fullscreen .graph-viewport,
+    .graph-section:-webkit-full-screen .graph-viewport {
+      max-height: calc(100vh - 120px);
+      height: calc(100vh - 120px);
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="container" style="padding:0;">
+      <span class="badge">FISA 2026 — Pr. Raouf Boulkroune</span>
+      <h1>Projet Boutique E-Commerce AWS — Réunion de Cadrage Groupe</h1>
+      <p class="subtitle">Architecture Haute Disponibilité · Comparatif VM vs Serverless · Batch EC2 Spot & FinOps Free Tier (0,00 €)</p>
+    </div>
+  </header>
+
+  <div class="container">
+    <section>
+      <h2>1. Ce que demande la consigne officielle & Notre stratégie</h2>
+      <div class="grid-3">
+        <div class="box">
+          <h3>Solution 1 : 100 % VM (IaaS)</h3>
+          <p><strong>ALB + Auto Scaling EC2 + RDS Multi-AZ + Kafka MSK</strong>.</p>
+          <p style="color:#b91c1c;font-weight:600;">Coût hors Free Tier : ~250 $/mois (MSK n'a aucun Free Tier, RDS Multi-AZ > 750h, NAT GW payante).</p>
+          <p><em>Présentée et chiffrée dans le rapport.</em></p>
+        </div>
+        <div class="box">
+          <h3>Solution 2 : 100 % Serverless</h3>
+          <p><strong>CloudFront + S3 + API Gateway + Lambda + DynamoDB + SNS/SQS</strong>.</p>
+          <p style="color:var(--green);font-weight:600;">Coût : 0,00 € (Always Free).</p>
+          <p><em>Mais la consigne impose d'utiliser à la fois du Serverless ET du Compute EC2 !</em></p>
+        </div>
+        <div class="box highlight">
+          <h3>Notre Solution Déployée (Hybride 0 €)</h3>
+          <p><strong>ALB + 2 EC2 Web (HA) + Lambda (Commande) + DynamoDB + SNS/SQS + Worker EC2 Spot (PDF & Colisage)</strong>.</p>
+          <p style="color:var(--green);font-weight:700;">Coche 100 % des exigences techniques à 0,00 € en environnement éphémère Terraform !</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION AVEC LE GRAPHE AGRANDISSABLE ET ZOOMABLE -->
+    <section class="graph-section" id="graphSection">
+      <div class="graph-header">
+        <h2>2. Schéma de l'Architecture Hybride Déployée (Terraform)</h2>
+        <div class="graph-controls">
+          <button class="btn-ctrl" onclick="zoomIn()" title="Agrandir">🔍+ Zoom In</button>
+          <button class="btn-ctrl" onclick="zoomOut()" title="Réduire">🔍- Zoom Out</button>
+          <button class="btn-ctrl" onclick="resetZoom()" title="Réinitialiser">↺ 100%</button>
+          <button class="btn-ctrl fullscreen-btn" onclick="toggleFullscreen()" title="Plein Écran">⛶ Plein Écran</button>
+        </div>
+      </div>
+      <p style="margin-top:0; color:var(--muted); font-size:0.9rem;">
+        💡 <em>Utilise les boutons ci-dessus pour zoomer ou passer en plein écran pendant ton partage d'écran. Tu peux aussi faire défiler horizontalement et verticalement.</em>
+      </p>
+
+      <div class="graph-viewport" id="graphViewport">
+        <div class="zoom-wrapper" id="zoomWrapper">
+          <div class="mermaid" id="mermaidDiagram">
+flowchart LR
+    Client["Client (Navigateur & Mail)"]
+    Admin["Admin Cloud (Seuils CloudWatch)"]
+
+    subgraph HA_Web["1. Front-End HA (IaaS Multi-AZ)"]
+        ALB["Application Load Balancer"]
+        EC2_A["EC2 Web Zone A (t3.micro)"]
+        EC2_B["EC2 Web Zone B (t3.micro)"]
+        ALB --> EC2_A & EC2_B
+    end
+
+    subgraph Serverless_Order["2. Cœur Commande (Serverless)"]
+        Lambda["AWS Lambda: CreateOrder"]
+        DDB[("DynamoDB: Products & Orders")]
+    end
+
+    subgraph Event_Watch["3. Tampon & Surveillance"]
+        SNS(("Amazon SNS (Mails Client)"))
+        SQS[["Amazon SQS (File Batch)"]]
+        CW["CloudWatch Alarms (Seuils & Split)"]
+    end
+
+    subgraph Spot_Batch["4. Batch Éphémère EC2 Spot"]
+        Spot1["EC2 Spot #1 (PDF + Colis S/M/L/XL)"]
+        Spot2["EC2 Spot #2 (Split si pic !)"]
+        S3[("Amazon S3: Factures PDF")]
+    end
+
+    Client -->|Visite & Achat| ALB
+    EC2_A & EC2_B -->|Appelle| Lambda
+    Lambda -->|Enregistre PENDING| DDB
+    Lambda -->|Mail 1: Confirmation| SNS
+    Lambda -->|Empile| SQS
+    Admin -.->|Règle seuils| CW
+    SQS -->|Nb messages| CW
+    CW -->|Lance 1 ou 2 Spot| Spot1 & Spot2
+    SQS -->|Dépile en parallèle| Spot1 & Spot2
+    Spot1 & Spot2 -->|Génère Facture PDF| S3
+    Spot1 & Spot2 -->|Statut = SHIPPED| DDB
+    Spot1 & Spot2 -->|Mail 2: N° Suivi + Lien PDF| SNS
+    SNS -.->|Notifications temps réel| Client
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>3. Pourquoi l'EC2 Spot Éphémère est un Coup de Maître FinOps</h2>
+      <div class="grid-2">
+        <div class="box">
+          <h3>Ce que fait le Worker EC2 Spot (Déjà validé en PoC !)</h3>
+          <ol>
+            <li><strong>Calcul du carton transporteur (S, M, L, XL) :</strong> Calcule le volume (+15 % calage) et le poids total des articles commandés pour choisir le carton optimal.</li>
+            <li><strong>Génération de la Facture PDF (<code>fpdf2</code>) :</strong> Crée la facture PDF officielle avec TVA, taille du colis et numéro de suivi, puis l'archive sur <strong>Amazon S3</strong>.</li>
+            <li><strong>Mise à jour & Notification SNS :</strong> Passe la commande à <code>SHIPPED</code> dans DynamoDB et envoie par mail SNS le <strong>numéro de suivi transporteur</strong> + lien PDF au client.</li>
+            <li><strong>Surveillance CloudWatch & Split en 2 :</strong> Si le nombre de commandes dans SQS dépasse le seuil de pic réglé par l'Admin Cloud, une <strong>2ème instance Spot</strong> se lance automatiquement pour diviser le batch en 2 !</li>
+          </ol>
+        </div>
+        <div class="box">
+          <h3>Seuil de Rentabilité : EC2 Spot Nocturne (2h/nuit) vs Lambda</h3>
+          <p>L'instance Spot ne tourne pas 24h/24 : elle se lance uniquement <strong>2h la nuit</strong> (ou sur seuil d'alerte SQS) puis s'éteint (<em>Scale-to-Zero</em>).</p>
+          <ul>
+            <li><strong>Coût EC2 Spot (2h/j = 60h/mois + 8 Go EBS) :</strong> <span class="kpi">0,89 $ / mois</span></li>
+            <li><strong>Coût Lambda (3s à 512 Mo par PDF) :</strong> <strong>0,0000202 $ / commande</strong></li>
+            <li><strong>Seuil de rentabilité (Break-Even Point) :</strong> <span class="kpi">44 000 cmd / mois</span> (~1 450 cmd/jour)</li>
+          </ul>
+          <p>Au-delà de 44 000 commandes/mois (ou si le batch dépasse la limite stricte des <strong>15 minutes d'une Lambda</strong>), l'EC2 Spot éphémère économise <strong>plus de 75 %</strong> !</p>
+        </div>
+      </div>
+
+      <h3>Tailles de cartons prédéfinies pour le transporteur (Implémentées dans le Worker)</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Code Format</th>
+            <th>Nom du Carton</th>
+            <th>Dimensions Max (L × l × h)</th>
+            <th>Volume Max</th>
+            <th>Poids Max</th>
+            <th>Tarif Transporteur HT</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td><code>COLIS_S</code></td><td>Colis S (Petit)</td><td>20 × 15 × 10 cm</td><td>3 000 cm³</td><td>2,0 kg</td><td>4,90 €</td></tr>
+          <tr><td><code>COLIS_M</code></td><td>Colis M (Standard)</td><td>40 × 30 × 20 cm</td><td>24 000 cm³</td><td>10,0 kg</td><td>8,90 €</td></tr>
+          <tr><td><code>COLIS_L</code></td><td>Colis L (Volumineux)</td><td>60 × 40 × 40 cm</td><td>96 000 cm³</td><td>25,0 kg</td><td>14,90 €</td></tr>
+          <tr><td><code>COLIS_XL</code></td><td>Colis XL (Palette)</td><td>100 × 60 × 60 cm</td><td>360 000 cm³</td><td>100,0 kg</td><td>29,90 €</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>4. Proposition de Répartition des Tâches (Groupe de 2 ou 3)</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Lot</th>
+            <th>Responsabilité Technique (Terraform + Code)</th>
+            <th>Partie Rapport & Soutenance</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Lot 1 : Front-End HA & IaaS</strong></td>
+            <td>VPC, Security Groups, Application Load Balancer (ALB), Auto Scaling Group (2 VM EC2 <code>t3.micro</code> Multi-AZ) + Interface Web Boutique</td>
+            <td>Présentation de la Solution 1 (100 % VM), Haute Disponibilité Multi-AZ & Load Balancing</td>
+          </tr>
+          <tr>
+            <td><strong>Lot 2 : Serverless & Données</strong></td>
+            <td>Tables DynamoDB (<code>Products</code> & <code>Orders</code>), Fonction Lambda <code>CreateOrder</code>, Topic SNS de confirmation</td>
+            <td>Présentation de la Solution 2 (100 % Serverless), DynamoDB Provisioned Free Tier & Pub/Sub SNS</td>
+          </tr>
+          <tr>
+            <td><strong>Lot 3 : Batch Spot, PDF & FinOps</strong><br><em>(PoC déjà prêt !)</em></td>
+            <td>File SQS, Worker EC2 Spot (calcul colis S/M/L/XL + génération PDF S3 + suivi SNS), Alarmes CloudWatch (seuil & split en 2)</td>
+            <td>Analyse FinOps comparative, calcul du seuil de rentabilité (44 000 cmd/mois) & démo PDF</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+  </div>
+
+  <script>
+    let currentZoom = 1.25; // Zoom par défaut plus grand pour une meilleure lisibilité
+    const zoomStep = 0.2;
+    const minZoom = 0.6;
+    const maxZoom = 2.8;
+    const wrapper = document.getElementById('zoomWrapper');
+    const viewport = document.getElementById('graphViewport');
+    const section = document.getElementById('graphSection');
+
+    function applyZoom() {
+      wrapper.style.transform = `scale(${currentZoom})`;
+    }
+
+    // Appliquer le zoom par défaut au chargement
+    window.addEventListener('DOMContentLoaded', () => {
+      applyZoom();
+    });
+
+    function zoomIn() {
+      if (currentZoom < maxZoom) {
+        currentZoom = Math.round((currentZoom + zoomStep) * 10) / 10;
+        applyZoom();
+      }
+    }
+
+    function zoomOut() {
+      if (currentZoom > minZoom) {
+        currentZoom = Math.round((currentZoom - zoomStep) * 10) / 10;
+        applyZoom();
+      }
+    }
+
+    function resetZoom() {
+      currentZoom = 1.0;
+      applyZoom();
+      viewport.scrollLeft = 0;
+      viewport.scrollTop = 0;
+    }
+
+    function toggleFullscreen() {
+      if (!document.fullscreenElement) {
+        if (section.requestFullscreen) {
+          section.requestFullscreen();
+        } else if (section.webkitRequestFullscreen) {
+          section.webkitRequestFullscreen();
+        }
+      } else {
+        if (document.exitFullscreen) {
+          document.exitFullscreen();
+        }
+      }
+    }
+
+    // Glisser-déposer (pan) avec la souris
+    let isDown = false;
+    let startX, startY, scrollLeft, scrollTop;
+
+    viewport.addEventListener('mousedown', (e) => {
+      isDown = true;
+      startX = e.pageX - viewport.offsetLeft;
+      startY = e.pageY - viewport.offsetTop;
+      scrollLeft = viewport.scrollLeft;
+      scrollTop = viewport.scrollTop;
+    });
+
+    viewport.addEventListener('mouseleave', () => { isDown = false; });
+    viewport.addEventListener('mouseup', () => { isDown = false; });
+
+    viewport.addEventListener('mousemove', (e) => {
+      if (!isDown) return;
+      e.preventDefault();
+      const x = e.pageX - viewport.offsetLeft;
+      const y = e.pageY - viewport.offsetTop;
+      const walkX = (x - startX) * 1.4;
+      const walkY = (y - startY) * 1.4;
+      viewport.scrollLeft = scrollLeft - walkX;
+      viewport.scrollTop = scrollTop - walkY;
+    });
+  </script>
+</body>
+</html>
