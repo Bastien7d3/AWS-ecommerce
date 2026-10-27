@@ -108,16 +108,16 @@ Au lieu de maintenir une VM coûteuse allumée 24h/24, une instance **EC2 Spot (
 1. **Dimensionnement automatique du colis transporteur :**
    * Calcule le volume total (avec marge de calage de 15 %) et le poids total de la commande.
    * Sélectionne automatiquement le format optimal parmi la grille transporteur prédéfinie :
-     * **Colis S (Petit)** : $20\times 15\times 10\text{ cm}$ ($\le 2\text{ kg}$) — 4,90 € HT
-     * **Colis M (Standard)** : $40\times 30\times 20\text{ cm}$ ($\le 10\text{ kg}$) — 8,90 € HT
-     * **Colis L (Volumineux)** : $60\times 40\times 40\text{ cm}$ ($\le 25\text{ kg}$) — 14,90 € HT
-     * **Colis XL (Palette)** : $100\times 60\times 60\text{ cm}$ ($> 25\text{ kg}$) — 29,90 € HT
+     * **Colis S (Petit)** : 20 x 15 x 10 cm (max 2 kg) — 4,90 € HT
+     * **Colis M (Standard)** : 40 x 30 x 20 cm (max 10 kg) — 8,90 € HT
+     * **Colis L (Volumineux)** : 60 x 40 x 40 cm (max 25 kg) — 14,90 € HT
+     * **Colis XL (Palette)** : 100 x 60 x 60 cm (> 25 kg) — 29,90 € HT
 2. **Génération de la Facture PDF officielle (`fpdf2`) :**
    * Tableau complet des lignes d'articles, TVA 20 %, total TTC.
    * Encadré logistique avec dimensions du carton, taux de remplissage volumétrique et numéro de suivi transporteur (`TRK-EUW3-2026-...`).
    * Téléversement sécurisé sur **Amazon S3** avec URL pré-signée.
 3. **Mise à jour d'état & Notification d'expédition :**
-   * La commande passe de `PENDING` $\rightarrow$ `PACKAGED` $\rightarrow$ `SHIPPED` dans DynamoDB.
+   * La commande passe de `PENDING` à `PACKAGED` puis `SHIPPED` dans DynamoDB.
    * **Amazon SNS** envoie un e-mail au client avec son numéro de suivi transporteur et le lien de téléchargement direct de la facture.
 4. **Auto-extinction (*Scale-to-Zero*) :** Dès que la file SQS est vide, l'instance Spot s'éteint pour ne pas consommer de budget.
 
@@ -125,15 +125,20 @@ Au lieu de maintenir une VM coûteuse allumée 24h/24, une instance **EC2 Spot (
 
 ## 4. Analyse FinOps & Seuil de Rentabilité (Break-Even Point)
 
+### Comparatif des coûts (Région eu-west-3 Paris)
+
 * **Coût de l'EC2 Spot en batch éphémère (2h / nuit = 60h / mois) :**
-  * Calcul Spot `t3.micro` : $60\text{ h} \times 0,0031\text{ \$/h} = 0,186\text{ \$/mois}$.
-  * Disque EBS `gp3` (8 Go) : $0,70\text{ \$/mois}$.
-  * **Total mensuel : $\approx \mathbf{0,89\ \$/mois}$.**
-* **Coût sur AWS Lambda (traitement lourd binaire 3s à 512 Mo de RAM) :** $\approx \mathbf{0,0000202\ \$ / commande}$.
-* **Seuil de rentabilité :**
-  $$\text{Seuil} = \frac{0,89\text{ \$}}{0,0000202\text{ \$}} \approx \mathbf{44\,000\text{ commandes / mois}}$$
-  * *En dessous de 44 000 commandes/mois :* Lambda est couverte par les 400 000 Go-s de l'offre *Always Free* (0,00 €).
-  * *Au-delà de 44 000 commandes/mois (ou si le traitement batch dépasse les 15 minutes max de timeout Lambda) :* L'EC2 Spot éphémère est largement plus économique (-75 % d'économies à 200 000 commandes).
+  * Calcul Spot `t3.micro` : 60 h x 0,0031 $/h = **0,186 $/mois**
+  * Disque EBS `gp3` (8 Go) : **0,70 $/mois**
+  * **Total mensuel fixe du worker : environ 0,89 $/mois**
+
+* **Coût sur AWS Lambda (génération PDF 3s à 512 Mo de RAM) :**
+  * Environ **0,0000202 $ par commande**
+
+### Seuil de rentabilité mathématique
+* `Seuil = 0,89 $ / 0,0000202 $` = **environ 44 000 commandes / mois** (~1 450 commandes / jour)
+* **En dessous de 44 000 commandes/mois :** Le Serverless (Lambda) est le plus économique, et les 266 000 premières exécutions sont couvertes à **0,00 €** par l'offre *Always Free* (400 000 Go-secondes).
+* **Au-delà de 44 000 commandes/mois :** L'EC2 Spot éphémère est nettement plus avantageux (-75 % à 200 000 commandes). De plus, elle s'affranchit de la limite stricte des **15 minutes d'exécution maximum** imposée par AWS Lambda pour les très gros traitements par lots.
 
 ---
 
