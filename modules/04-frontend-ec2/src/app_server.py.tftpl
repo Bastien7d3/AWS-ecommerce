@@ -28,7 +28,7 @@ class DecimalEncoder(json.JSONEncoder):
         return super().default(obj)
 
 
-def get_instance_id():
+def get_instance_info():
     try:
         req = urllib.request.Request(
             "http://169.254.169.254/latest/api/token",
@@ -36,16 +36,25 @@ def get_instance_id():
             method="PUT",
         )
         token = urllib.request.urlopen(req, timeout=1).read().decode()
-        req2 = urllib.request.Request(
+
+        req_id = urllib.request.Request(
             "http://169.254.169.254/latest/meta-data/instance-id",
             headers={"X-aws-ec2-metadata-token": token},
         )
-        return urllib.request.urlopen(req2, timeout=1).read().decode()
+        inst_id = urllib.request.urlopen(req_id, timeout=1).read().decode()
+
+        req_az = urllib.request.Request(
+            "http://169.254.169.254/latest/meta-data/placement/availability-zone",
+            headers={"X-aws-ec2-metadata-token": token},
+        )
+        az = urllib.request.urlopen(req_az, timeout=1).read().decode()
+
+        return f"{inst_id} ({az})"
     except Exception:
-        return "ec2-front"
+        return "ec2-front-local"
 
 
-INSTANCE_ID = get_instance_id()
+INSTANCE_ID = get_instance_info()
 
 HTML_PAGE = """<!DOCTYPE html>
 <html lang="fr">
