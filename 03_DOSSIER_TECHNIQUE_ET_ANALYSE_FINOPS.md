@@ -6,17 +6,21 @@
 
 ---
 
-## 1. Vue d'Ensemble de la Solution Hybride & Surveillance Élastique
+## 1. Vue d'Ensemble de la Solution Hybride Retenue
+
+L'architecture intègre désormais **l'élasticité native sur le Front-End (Auto Scaling Group)** et simplifie le traitement asynchrone sur un **Worker EC2 Spot éphémère** :
 
 ```mermaid
 flowchart TB
-    subgraph Front_Tier["1. Entrée & Présentation (Haute Disponibilité Web)"]
+    subgraph Front_Tier["1. Entrée & Front-End Élastique (IaaS Multi-AZ)"]
         User["Client Web"]
         ALB["Application Load Balancer (Public, Multi-AZ)"]
-        subgraph ASG_Web["Auto Scaling Group Web (2 VM)"]
+        subgraph ASG_Web["Auto Scaling Group Web (min=1, desired=2, max=4)"]
             EC2_Web1["EC2 Web Zone A (t3.micro)"]
             EC2_Web2["EC2 Web Zone B (t3.micro)"]
         end
+        CW_Policy["CloudWatch Target Tracking (CPU > 60%)"]
+        CW_Policy -.->|Scale-Out / Scale-In| ASG_Web
         User -->|HTTP :80| ALB
         ALB -->|Forward :80| EC2_Web1 & EC2_Web2
     end
@@ -25,93 +29,75 @@ flowchart TB
         Lambda["AWS Lambda: CreateOrder (Python 3.12)"]
         DDB_Catalog[("DynamoDB: Products (Dimensions & Poids)")]
         DDB_Orders[("DynamoDB: Orders (Statuts & Suivi)")]
-        SNS(("Amazon SNS: OrderEventsTopic"))
+        SNS_Order(("Amazon SNS: OrderConfirmation"))
         
         EC2_Web1 & EC2_Web2 -->|POST /order| Lambda
         Lambda -->|Décrémente stock| DDB_Catalog
         Lambda -->|Insère commande (Status: PENDING)| DDB_Orders
-        Lambda -->|Mail 1: Confirmation réception| SNS
+        Lambda -->|Mail 1: Confirmation réception| SNS_Order
     end
 
-    subgraph Monitoring_Buffer["3. File Tampon SQS & Surveillance CloudWatch (Seuil Admin)"]
-        SQS[["Amazon SQS: batch-fulfillment-queue"]]
-        CW["CloudWatch Alarms (ApproximateNumberOfMessagesVisible)"]
-        Admin["Admin Cloud (Variables Terraform: seuil_1=10, seuil_split=50)"]
-        
+    subgraph Messaging_Buffer["3. File Tampon & Rétention"]
+        SQS[["Amazon SQS: batch-fulfillment-queue (Rétention 14j)"]]
         Lambda -->|Empile la commande| SQS
-        Admin -.->|Règle les seuils| CW
-        SQS -->|Remonte la métrique en continu| CW
     end
 
-    subgraph Async_Spot_Batch["4. Batch Élastique EC2 Spot (0 -> 1 -> 2 VM en cas de pic)"]
-        Spot1["EC2 Spot Worker #1 (t3.micro Spot)"]
-        Spot2["EC2 Spot Worker #2 (Split du batch si pic !)"]
+    subgraph Async_Spot_Batch["4. Batch Éphémère EC2 Spot (Calcul Colis & Facture PDF)"]
+        Spot["EC2 Spot Worker (t3.micro Spot de Nuit / Batch)"]
         S3_Bucket[("Amazon S3: Factures PDF & Audit")]
+        SNS_Ship(("Amazon SNS: ShippingNotification"))
         
-        CW -->|Seuil normal (ou 02h00)| Spot1
-        CW -->|Pic de charge (> seuil_split)| Spot2
-        SQS -->|Distribution parallèle (Visibility Timeout)| Spot1 & Spot2
-        Spot1 & Spot2 -->|1. Calcul Colis (S/M/L/XL) + N° Suivi| DDB_Orders
-        Spot1 & Spot2 -->|2. Génère Facture PDF| S3_Bucket
-        Spot1 & Spot2 -->|3. Mail 2: Expédié + N° Suivi + Lien PDF| SNS
+        SQS -->|Dépile la nuit (ou déclenchement manuel)| Spot
+        Spot -->|1. Calcul Colis (S/M/L/XL) + N° Suivi| DDB_Orders
+        Spot -->|2. Génère Facture PDF (fpdf2)| S3_Bucket
+        Spot -->|3. Statut = SHIPPED| DDB_Orders
+        Spot -->|4. Mail 2: Expédié + N° Suivi + Lien PDF| SNS_Ship
+        Spot -.->|5. Auto-extinction (Scale-to-Zero)| Spot
     end
 ```
 
 ---
 
-## 2. Détail du Traitement Batch sur EC2 Spot & Notification SNS
+## 2. Élasticité Front-End (Auto Scaling Group EC2)
 
-### 2.1 Calcul de Dimensionnement du Colis (*Carrier Box Sizing*)
-Chaque produit du catalogue possède ses dimensions $(L \times l \times h\text{ en cm})$ et son poids unitaire $(\text{kg})$. Le Worker EC2 Spot calcule le volume total cumulé (avec une marge de calage de 15 %) et le poids total de la commande, puis choisit parmi les **4 formats de cartons prédéfinis du transporteur** :
+Pour répondre à l'exigence d'une plateforme **évolutive et résiliente** :
+* **Déploiement Multi-AZ :** Les instances web sont réparties sur 2 sous-réseaux publics distincts (`eu-west-3a` et `eu-west-3b`).
+* **Politique d'Auto Scaling :**
+  * `min_size = 1` : Maintient en permanence au moins 1 serveur actif en cas de panne de zone.
+  * `desired_capacity = 2` : Deux instances tournent par défaut pour absorber le trafic normal et démontrer la répartition de charge.
+  * `max_size = 4` : Si le CPU moyen dépasse 60 %, une ou deux instances supplémentaires sont provisionnées automatiquement (*Scale-Out*). Dès que la charge diminue, le groupe réduit sa taille (*Scale-In*).
 
-| Format Transporteur | Dimensions Max $(L \times l \times h)$ | Volume Utile | Poids Max | Coût Transporteur |
+---
+
+## 3. Traitement Batch sur EC2 Spot : Rôle & FinOps
+
+### 3.1 Calcul de Dimensionnement du Colis (*Carrier Box Sizing*)
+Chaque produit du catalogue possède ses dimensions $(L \times l \times h\text{ en cm})$ et son poids unitaire $(\text{kg})$. Le Worker EC2 Spot calcule le volume total cumulé (avec une marge de calage de 15 %) et le poids total de la commande, puis sélectionne automatiquement le format optimal :
+
+| Format Transporteur | Dimensions Max $(L \times l \times h)$ | Volume Utile | Poids Max | Coût Transporteur HT |
 | :--- | :---: | :---: | :---: | :---: |
 | **Colis S (Small)** | $20 \times 15 \times 10\text{ cm}$ | $3\,000\text{ cm}^3$ | $2,0\text{ kg}$ | $4,90\text{ €}$ |
 | **Colis M (Medium)** | $40 \times 30 \times 20\text{ cm}$ | $24\,000\text{ cm}^3$ | $10,0\text{ kg}$ | $8,90\text{ €}$ |
 | **Colis L (Large)** | $60 \times 40 \times 40\text{ cm}$ | $96\,000\text{ cm}^3$ | $25,0\text{ kg}$ | $14,90\text{ €}$ |
 | **Colis XL (Palette)** | $100 \times 60 \times 60\text{ cm}$ | $360\,000\text{ cm}^3$ | $100,0\text{ kg}$ | $29,90\text{ €}$ |
 
-### 2.2 Génération de la Facture PDF & Mise à Jour du Statut
-Une fois le carton déterminé :
-1. Le worker attribue un **numéro de suivi transporteur unique** (ex : `TRK-EUW3-2026-84920`).
-2. Il génère une **facture PDF complète** (`fpdf2`) intégrant :
-   * Les coordonnées client et références de la commande,
-   * Le détail des lignes produits (quantité, dimensions, poids, prix HT/TVA/TTC),
-   * L'encadré logistique (**Format de carton sélectionné**, poids total, taux de remplissage volumétrique, **N° de suivi**).
-3. Il dépose le PDF sur **Amazon S3** et génère une URL signée (*Presigned URL*) valide 7 jours.
-4. Il met à jour la commande dans **DynamoDB** :
-   $$\text{PENDING} \longrightarrow \text{PACKAGED} \longrightarrow \text{SHIPPED}$$
-5. Il publie dans **Amazon SNS** un message d'expédition contenant le **numéro de suivi** et le **lien de téléchargement de la facture PDF**, envoyé par e-mail au client.
+### 3.2 Génération Facture PDF & Notification SNS
+1. Le worker attribue un **numéro de suivi transporteur unique** (ex : `TRK-EUW3-2026-C35105`).
+2. Il génère la facture PDF officielle (`fpdf2`) avec le détail des lignes d'articles, la TVA (20 %), les frais de port calculés, et l'encadré logistique (format du carton, taux de remplissage).
+3. Il téléverse le PDF sur **Amazon S3** (URL pré-signée).
+4. Il met à jour DynamoDB (`status = SHIPPED`) et publie sur **Amazon SNS** pour envoyer un mail au client avec son numéro de suivi transporteur et le lien de téléchargement.
+5. Une fois la file SQS vidée, la machine s'éteint (*Scale-to-Zero*).
 
 ---
 
-## 3. Surveillance CloudWatch & "Split" du Batch en Cas de Pic
+## 4. Analyse FinOps : Seuil de Rentabilité (Break-Even Point)
 
-Pour éviter qu'un afflux soudain de commandes ne retarde les expéditions, l'administrateur Cloud dispose d'un système de surveillance basé sur **Amazon CloudWatch** et **Amazon SQS** :
-
-1. **Métrique surveillée :** `ApproximateNumberOfMessagesVisible` (nombre de commandes en attente dans la file SQS) — **100 % gratuit** (métrique native AWS + jusqu'à 10 alarmes CloudWatch incluses dans l'offre *Always Free*).
-2. **Deux seuils réglables par l'Admin Cloud (`variables.tf`) :**
-   * **Seuil 1 (`spot_trigger_threshold`, ex : 10 commandes) :** Déclenche l'alarme `sqs-batch-start-alarm` qui passe la capacité de l'Auto Scaling Group Spot de **`0` à `1` instance**.
-   * **Seuil 2 (`spot_split_threshold`, ex : 50 commandes) :** S'il y a beaucoup plus de commandes que d'habitude, l'alarme `sqs-batch-split-alarm` passe la capacité à **`2` instances Spot** !
-3. **Partage automatique de la charge sans doublon :**
-   * Les 2 instances Spot lisent la même file SQS en parallèle.
-   * Dès que l'instance #1 récupère un lot de messages, SQS les verrouille temporairement (*Visibility Timeout* de 60s) pour que l'instance #2 prenne le lot suivant. Le batch est ainsi **divisé en 2** de manière totalement transparente !
-   * Quand la file retombe à `0` message (`sqs-batch-empty-alarm`), le groupe repasse à **`0` instance Spot** (*Scale-to-Zero*).
-
----
-
-## 4. Analyse FinOps : Seuil de Rentabilité EC2 Spot Éphémère vs Lambda
-
-### 4.1 Coûts de Référence (`eu-west-3` Paris)
-* **EC2 `t3.micro` Spot (exécution éphémère 2h/nuit = 60h/mois) :**
-  * Calcul Spot : $60\text{ h} \times 0,0031\text{ \$/h} = \mathbf{0,186\ \$/mois}$.
-  * Disque EBS `gp3` (8 Go) : $\mathbf{0,70\ \$/mois}$.
-  * **Total mensuel fixe pour 1 Worker Spot :** $\approx \mathbf{0,89\ \$/mois}$ (et seulement $+0,0062\text{ \$}$ si une 2ème instance Spot vient en renfort pendant 2 heures lors d'un pic !).
-* **AWS Lambda (arm64, 512 Mo RAM, 3s par génération PDF) :**
-  * Coût unitaire : $\approx \mathbf{0,0000202\ \$}$ par commande.
-
-### 4.2 Seuil de Rentabilité (*Break-Even Point*)
-$$N = \frac{0,89\text{ \$}}{0,0000202\text{ \$}} \approx \mathbf{44\,000\text{ commandes / mois}} \quad (\approx 1\,450\text{ commandes / jour})$$
-
-* **En dessous de 44 000 commandes/mois :** Le Serverless (Lambda) est plus économique (et couvert par les 400 000 Go-s *Always Free*).
-* **Au-delà de 44 000 commandes/mois (ou si le batch dépasse la limite stricte des 15 minutes d'une Lambda) :** L'architecture **EC2 Spot Éphémère** l'emporte avec plus de **75 % d'économies** à 200 000 commandes/mois, et la capacité de *splitter* le batch en 2 pour seulement **0,0031 $/heure** supplémentaire lors des pics !
+* **Coût EC2 Spot en batch éphémère (2h/nuit = 60h/mois) :**
+  * Calcul Spot : $60\text{ h} \times 0,0031\text{ \$/h} = 0,186\text{ \$/mois}$.
+  * Disque EBS `gp3` (8 Go) : $0,70\text{ \$/mois}$.
+  * **Total mensuel : $\approx \mathbf{0,89\ \$/mois}$.**
+* **Coût AWS Lambda (traitement lourd binaire 3s à 512 Mo de RAM) :** $\approx \mathbf{0,0000202\ \$ / commande}$.
+* **Seuil de rentabilité :**
+  $$\text{Seuil} = \frac{0,89\text{ \$}}{0,0000202\text{ \$}} \approx \mathbf{44\,000\text{ commandes / mois}}$$
+  * *< 44 000 commandes/mois :* Le Serverless Lambda est plus économique (inclus dans l'offre *Always Free*).
+  * *> 44 000 commandes/mois :* L'EC2 Spot éphémère permet plus de 75 % d'économies et contourne le timeout strict des 15 minutes imposé par Lambda.
