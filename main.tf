@@ -7,6 +7,14 @@
 
 terraform {
   required_version = ">= 1.5.0"
+  # à suppr à la fin
+  backend "s3" {
+    bucket         = "cloudshop-tfstate-fisa2026-unique"
+    key            = "global/s3/terraform.tfstate"
+    region         = "eu-west-3"
+    dynamodb_table = "cloudshop-tfstate-locks"
+    encrypt        = true
+  }
   required_providers {
     aws = {
       source  = "hashicorp/aws"
