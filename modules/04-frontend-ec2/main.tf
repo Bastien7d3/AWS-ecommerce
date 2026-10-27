@@ -285,3 +285,78 @@ resource "aws_autoscaling_policy" "cpu_target_tracking" {
     target_value = 60.0
   }
 }
+
+# ------------------------------------------------------------------------------
+# 5. DISTRIBUTION CLOUDFRONT (CDN Edge + HTTPS)
+# ------------------------------------------------------------------------------
+resource "aws_cloudfront_distribution" "front_cdn" {
+  enabled             = true
+  is_ipv6_enabled     = true
+  comment             = "CDN CloudShop pour le Load Balancer"
+  price_class         = "PriceClass_100"
+
+  origin {
+    domain_name = aws_lb.front_alb[0].dns_name
+    origin_id   = "ALB-CloudShop"
+
+    custom_origin_config {
+      http_port              = 80
+      https_port             = 443
+      origin_protocol_policy = "http-only"
+      origin_ssl_protocols   = ["TLSv1.2"]
+    }
+
+    # Optionnel : Envoi du header secret pour sécuriser l'ALB
+    custom_header {
+      name  = "X-CloudFront-Secret"
+      value = "MonSecretCloudShop2026"
+    }
+  }
+
+  default_cache_behavior {
+    target_origin_id       = "ALB-CloudShop"
+    viewer_protocol_policy = "redirect-to-https"
+
+    allowed_methods = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
+    cached_methods  = ["GET", "HEAD"]
+
+    forwarded_values {
+      query_string = true
+      headers      = ["*"]
+      cookies {
+        forward = "all"
+      }
+    }
+
+    min_ttl     = 0
+    default_ttl = 0
+    max_ttl     = 86400
+  }
+
+  restrictions {
+    geo_restriction {
+      restriction_type = "none"
+    }
+  }
+
+  viewer_certificate {
+    cloudfront_default_certificate = true
+  }
+}
+resource "aws_lb_listener_rule" "require_cloudfront_header" {
+  count        = var.enable_autoscaling_alb ? 1 : 0
+  listener_arn = aws_lb_listener.front_http[0].arn
+  priority     = 10
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.front_tg[0].arn
+  }
+
+  condition {
+    http_header {
+      http_header_name = "X-CloudFront-Secret"
+      values           = ["MonSecretCloudShop2026"]
+    }
+  }
+}
