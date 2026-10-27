@@ -4,7 +4,7 @@
 > **Enseignant :** Pr. Raouf Boulkroune  
 > **Auteur :** Bastien (`Bastien7d3`) | **Compte AWS :** `689505268069` | **Région :** `eu-west-3` (Paris)  
 > **Automatisation IaC :** Terraform
-
+> TODO: Penser à supprimer la déclaration du s3 de synchro dans le main.tf
 ---
 
 ## 1. Sujet Officiel du Projet (Spécifications Client)
