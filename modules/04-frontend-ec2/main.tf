@@ -2,13 +2,16 @@
 # MODULE 04 : SERVEUR WEB FRONT-END EC2 (+ OPTION AUTO SCALING & ALB MULTI-AZ)
 # ==============================================================================
 
+# ------------------------------------------------------------------------------
+# 1. SECURITY GROUPS (Séparation ALB Public & EC2 Privées/Protégées)
+# ------------------------------------------------------------------------------
 resource "aws_security_group" "web_sg" {
   name        = "${var.project_name}-front-web-sg"
   description = "Autorise le trafic HTTP entrant sur le port 80"
   vpc_id      = var.vpc_id
 
   ingress {
-    description = "HTTP entrant"
+    description = "HTTP entrant public"
     from_port   = 80
     to_port     = 80
     protocol    = "tcp"
@@ -24,6 +27,9 @@ resource "aws_security_group" "web_sg" {
   }
 }
 
+# ------------------------------------------------------------------------------
+# 2. RÔLE & POLICIES IAM (Indispensables pour que le Web Server appelle AWS)
+# ------------------------------------------------------------------------------
 resource "aws_iam_role" "front_ec2_role" {
   name = "${var.project_name}-front-ec2-role"
 
@@ -88,13 +94,16 @@ resource "aws_iam_instance_profile" "front_ec2_profile" {
   role = aws_iam_role.front_ec2_role.name
 }
 
+# ------------------------------------------------------------------------------
+# 3. SCRIPTS ET PROVISIONING (Génération du script Python et upload S3)
+# ------------------------------------------------------------------------------
 locals {
   rendered_server_py = templatefile("${path.module}/src/app_server.py.tftpl", {
     region          = var.aws_region
     products_table  = var.products_table_name
     orders_table    = var.orders_table_name
     invoices_bucket = var.invoices_bucket_name
-    lambda_name     = var.lambda_function_name
+    lambda_name      = var.lambda_function_name
     sns_confirm_arn = var.order_confirmation_topic_arn
     sns_ship_arn    = var.shipping_notification_topic_arn
     sqs_queue_url   = var.orders_batch_queue_url
@@ -194,6 +203,7 @@ resource "aws_lb_target_group" "front_tg" {
     healthy_threshold   = 2
     unhealthy_threshold = 3
     interval            = 15
+    timeout             = 5
   }
 }
 
@@ -233,20 +243,32 @@ resource "aws_launch_template" "front_lt" {
       delete_on_termination = true
     }
   }
+
+  depends_on = [
+    aws_s3_object.front_server_script
+  ]
 }
 
 resource "aws_autoscaling_group" "front_asg" {
   count               = var.enable_autoscaling_alb ? 1 : 0
   name                = "${var.project_name}-front-asg"
-  min_size            = 1
+  min_size            = 2
   desired_capacity    = 2
   max_size            = 4
   vpc_zone_identifier = slice(var.subnet_ids, 0, min(2, length(var.subnet_ids)))
   target_group_arns   = [aws_lb_target_group.front_tg[0].arn]
 
+  # Utilise le bilan de santé de l ALB pour détecter une instance KO
+  health_check_type         = "ELB"
+  health_check_grace_period = 180
+
   launch_template {
     id      = aws_launch_template.front_lt[0].id
     version = "$Latest"
+  }
+
+  lifecycle {
+    create_before_destroy = true
   }
 }
 

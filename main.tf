@@ -62,7 +62,7 @@ variable "notification_email" {
 variable "enable_autoscaling_alb" {
   description = "Passe à true pour déployer le Load Balancer Multi-AZ et l'Auto Scaling Group (1 à 4 EC2)"
   type        = bool
-  default     = false
+  default     = true
 }
 
 # ------------------------------------------------------------------------------
