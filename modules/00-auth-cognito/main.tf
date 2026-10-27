@@ -25,6 +25,14 @@ resource "aws_cognito_user_pool" "pool" {
   }
 }
 
+# ------------------------------------------------------------------------------
+# DOMAINE COGNITO (REQUIS POUR LA VALIDATION PAR LIEN EMAIL)
+# ------------------------------------------------------------------------------
+resource "aws_cognito_user_pool_domain" "main" {
+  domain       = "${var.project_name}-auth-fisa2026"
+  user_pool_id = aws_cognito_user_pool.pool.id
+}
+
 resource "aws_cognito_user_pool_client" "client" {
   name            = "${var.project_name}-app-client"
   user_pool_id    = aws_cognito_user_pool.pool.id
