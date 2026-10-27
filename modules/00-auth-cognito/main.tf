@@ -12,7 +12,9 @@ resource "aws_cognito_user_pool" "pool" {
   }
 
   verification_message_template {
-    default_email_option = "CONFIRM_WITH_CODE"
+    default_email_option  = "CONFIRM_WITH_LINK"
+    email_subject         = "Activation de votre compte CloudShop"
+    email_message_by_link = "Merci de vous être inscrit sur CloudShop ! Veuillez cliquer sur le lien suivant pour confirmer votre compte : {##Cliquer ici##}"
   }
 
   schema {
