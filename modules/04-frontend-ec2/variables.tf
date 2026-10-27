@@ -79,3 +79,14 @@ variable "enable_autoscaling_alb" {
   type        = bool
   default     = false
 }
+
+variable "user_pool_id" {
+  description = "ID du User Pool Cognito"
+  type        = string
+}
+
+variable "user_pool_client_id" {
+  description = "ID du Client App Cognito"
+  type        = string
+}
+
