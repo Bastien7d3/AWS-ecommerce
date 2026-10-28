@@ -6,6 +6,7 @@
 # pour que Terraform produise correctement les interpolations JavaScript.
 
 import json
+import base64
 import re
 import urllib.parse
 import urllib.request
@@ -29,6 +30,22 @@ SNS_CONFIRM_ARN = "${sns_confirm_arn}"
 SNS_SHIP_ARN = "${sns_ship_arn}"
 SQS_QUEUE_URL = "${sqs_queue_url}"
 SPOT_LT_ID = "${spot_lt_id}"
+
+
+def decode_jwt_payload(token_str):
+    """Decode le payload d un JWT Cognito sans dependance externe."""
+    try:
+        if not token_str or "." not in token_str:
+            return {}
+        parts = token_str.split(".")
+        if len(parts) < 2:
+            return {}
+        payload_b64 = parts[1]
+        payload_b64 += "=" * ((4 - len(payload_b64) % 4) % 4)
+        data = base64.urlsafe_b64decode(payload_b64.encode("ascii"))
+        return json.loads(data.decode("utf-8"))
+    except Exception:
+        return {}
 
 
 class DecimalEncoder(json.JSONEncoder):
@@ -178,7 +195,7 @@ SHOP_HTML = r"""<!DOCTYPE html>
         Vous pouvez remplir votre panier sans compte.
         Connectez-vous au moment de commander.
       </p>
-      <a href="/login?next=checkout">Connexion ou création de compte →</a>
+      <a id="auth-prompt-link" href="/login?next=checkout">Connexion ou création de compte →</a>
     </section>
 
     <label for="name">Nom du client</label>
@@ -424,14 +441,18 @@ $('clear').addEventListener('click', () => {
 
 function updateCheckoutAuthState() {
   const status = $('auth-status');
+  const link = $('auth-prompt-link') || (document.querySelector('.account-prompt a'));
   if (!status) return;
 
+  const displayName = sessionStorage.getItem('user_name') || localStorage.getItem('neolia_customer_name') || (authEmail && authEmail.includes('@') ? authEmail.split('@')[0] : authEmail);
+
   if (token && authEmail) {
-    status.textContent =
-      'Connecté avec ' + authEmail + '. Votre panier est conservé.';
+    const emailDisplay = authEmail.includes('@') ? ' (' + esc(authEmail) + ')' : '';
+    status.innerHTML = 'Connecté en tant que <strong>' + esc(displayName) + '</strong>' + emailDisplay + '. Votre panier est conservé.';
+    if (link) link.style.display = 'none';
   } else {
-    status.textContent =
-      'Vous pouvez remplir votre panier sans compte. Connectez-vous au moment de commander.';
+    status.textContent = 'Vous pouvez remplir votre panier sans compte. Connectez-vous au moment de commander.';
+    if (link) link.style.display = 'inline-block';
   }
 }
 
@@ -499,29 +520,45 @@ function logoutAndRedirect(event) {
 }
 
 function initAuthUI() {
-  const storedToken = sessionStorage.getItem('jwt_token');
-  const storedEmail = sessionStorage.getItem('user_email');
-  let storedName = sessionStorage.getItem('user_name') || localStorage.getItem('neolia_customer_name') || storedEmail;
+  let storedToken = sessionStorage.getItem('jwt_token');
+  let storedEmail = sessionStorage.getItem('user_email');
+  let storedName = sessionStorage.getItem('user_name') || localStorage.getItem('neolia_customer_name');
   let storedIsAdmin = sessionStorage.getItem('user_is_admin') === 'true';
+
+  if (storedToken && window.parseJwt) {
+    try {
+      const p = window.parseJwt(storedToken);
+      if (p) {
+        if (p.email) {
+          storedEmail = p.email;
+          sessionStorage.setItem('user_email', p.email);
+        }
+        if (p.name) {
+          storedName = p.name;
+          sessionStorage.setItem('user_name', p.name);
+        } else if (p.given_name) {
+          storedName = (p.given_name + ' ' + (p.family_name || '')).trim();
+          sessionStorage.setItem('user_name', storedName);
+        }
+        const groups = p['cognito:groups'] || [];
+        if (Array.isArray(groups) && groups.includes('admin')) {
+          storedIsAdmin = true;
+          sessionStorage.setItem('user_is_admin', 'true');
+        }
+      }
+    } catch (_) {}
+  }
 
   if (storedToken && storedEmail) {
     token = storedToken;
     authEmail = storedEmail;
-    if (window.parseJwt) {
-      try {
-        const p = window.parseJwt(storedToken);
-        if (p) {
-          if (p.name) storedName = p.name;
-          else if (p.given_name) storedName = (p.given_name + ' ' + (p.family_name || '')).trim();
-          const groups = p['cognito:groups'] || [];
-          if (Array.isArray(groups) && groups.includes('admin')) {
-            storedIsAdmin = true;
-          }
-        }
-      } catch (_) {}
-    }
+    storedName = storedName || (storedEmail.includes('@') ? storedEmail.split('@')[0] : storedEmail);
     renderHeaderAuth(true, storedName, storedIsAdmin);
     updateCheckoutAuthState();
+    const nameInput = $('name');
+    if (nameInput && (!nameInput.value || nameInput.value.includes('-')) && storedName) {
+      nameInput.value = storedName;
+    }
   } else {
     renderHeaderAuth(false);
   }
@@ -564,18 +601,17 @@ function initAuthUI() {
       }
 
       token = session.getIdToken().getJwtToken();
-      authEmail = currentUser.getUsername();
-
-      sessionStorage.setItem('jwt_token', token);
-      sessionStorage.setItem('user_email', authEmail);
-
+      let realEmail = null;
       let uName = storedName;
       let isAdmin = false;
+
       try {
         const payload = session.getIdToken().decodePayload();
         if (payload) {
+          if (payload.email) realEmail = payload.email;
           if (payload.name) uName = payload.name;
           else if (payload.given_name) uName = (payload.given_name + ' ' + (payload.family_name || '')).trim();
+          if (payload.address) localStorage.setItem('neolia_customer_address', payload.address);
           const groups = payload['cognito:groups'] || [];
           if (Array.isArray(groups) && groups.includes('admin')) {
             isAdmin = true;
@@ -583,17 +619,22 @@ function initAuthUI() {
         }
       } catch (_) {}
 
-      uName = uName || authEmail;
+      authEmail = realEmail || (storedEmail && storedEmail.includes('@') ? storedEmail : currentUser.getUsername());
+      uName = uName || (authEmail.includes('@') ? authEmail.split('@')[0] : authEmail);
+
+      sessionStorage.setItem('jwt_token', token);
+      sessionStorage.setItem('user_email', authEmail);
       sessionStorage.setItem('user_name', uName);
       sessionStorage.setItem('user_is_admin', isAdmin ? 'true' : 'false');
+      localStorage.setItem('neolia_customer_name', uName);
 
       renderHeaderAuth(true, uName, isAdmin);
       updateCheckoutAuthState();
       renderCart();
 
       const nameInput = $('name');
-      if (nameInput && !nameInput.value) {
-        nameInput.value = localStorage.getItem('neolia_customer_name') || uName || '';
+      if (nameInput && (!nameInput.value || nameInput.value.includes('-')) && uName) {
+        nameInput.value = uName;
       }
     });
   } catch (err) {
@@ -607,17 +648,40 @@ initAuthUI();
 $('order').addEventListener('click', async () => {
   $('err').textContent = '';
 
-  if (!token || !authEmail) {
+  if (!token) {
     window.location.href = '/login?next=checkout';
     return;
   }
 
-  const name = $('name').value.trim();
-  const email = authEmail;
+  let email = authEmail || sessionStorage.getItem('user_email');
+  if (!email || !email.includes('@')) {
+    try {
+      const p = window.parseJwt ? window.parseJwt(token) : null;
+      if (p && p.email) email = p.email;
+    } catch (_) {}
+  }
+
+  const nameInput = $('name');
+  let name = (nameInput ? nameInput.value.trim() : '') ||
+             sessionStorage.getItem('user_name') ||
+             localStorage.getItem('neolia_customer_name');
+
+  if (!name && email && email.includes('@')) {
+    name = email.split('@')[0];
+  }
+
+  if (nameInput && !nameInput.value && name) {
+    nameInput.value = name;
+  }
+
+  if (name) {
+    sessionStorage.setItem('user_name', name);
+    localStorage.setItem('neolia_customer_name', name);
+  }
 
   if (!name) {
     $('err').textContent = 'Indiquez votre nom pour finaliser la commande.';
-    $('name').focus();
+    if (nameInput) nameInput.focus();
     return;
   }
 
@@ -644,7 +708,8 @@ $('order').addEventListener('click', async () => {
       body: JSON.stringify({
         items,
         customer_name: name,
-        customer_email: email
+        customer_email: email,
+        shipping_address: localStorage.getItem('neolia_customer_address') || '12 Rue de la Paix, 75002 Paris'
       })
     });
 
@@ -843,15 +908,17 @@ LOGIN_HTML = r"""<!DOCTYPE html>
       if (!error && session && session.isValid()) {
         const idToken = session.getIdToken();
         const token = idToken.getJwtToken();
-        const email = currentUser.getUsername();
+        let email = currentUser.getUsername();
         let displayName = email;
         let isAdmin = false;
 
         try {
           const payload = idToken.decodePayload();
           if (payload) {
+            if (payload.email) email = payload.email;
             if (payload.name) displayName = payload.name;
             else if (payload.given_name) displayName = (payload.given_name + ' ' + (payload.family_name || '')).trim();
+            if (payload.address) localStorage.setItem('neolia_customer_address', payload.address);
             const groups = payload['cognito:groups'] || [];
             if (Array.isArray(groups) && groups.includes('admin')) {
               isAdmin = true;
@@ -864,6 +931,7 @@ LOGIN_HTML = r"""<!DOCTYPE html>
         sessionStorage.setItem('user_email', email);
         sessionStorage.setItem('user_name', displayName);
         sessionStorage.setItem('user_is_admin', isAdmin ? 'true' : 'false');
+        if (displayName) localStorage.setItem('neolia_customer_name', displayName);
 
         const destination = next === 'checkout'
           ? '/?next=checkout#panier'
@@ -879,12 +947,15 @@ LOGIN_HTML = r"""<!DOCTYPE html>
     const token = idToken.getJwtToken();
     let displayName = email;
     let isAdmin = false;
+    let realEmail = email;
 
     try {
       const payload = idToken.decodePayload();
       if (payload) {
+        if (payload.email) realEmail = payload.email;
         if (payload.name) displayName = payload.name;
         else if (payload.given_name) displayName = (payload.given_name + ' ' + (payload.family_name || '')).trim();
+        if (payload.address) localStorage.setItem('neolia_customer_address', payload.address);
         const groups = payload['cognito:groups'] || [];
         if (Array.isArray(groups) && groups.includes('admin')) {
           isAdmin = true;
@@ -892,10 +963,10 @@ LOGIN_HTML = r"""<!DOCTYPE html>
       }
     } catch (_) {}
 
-    displayName = displayName || localStorage.getItem('neolia_customer_name') || email;
+    displayName = displayName || localStorage.getItem('neolia_customer_name') || realEmail;
 
     sessionStorage.setItem('jwt_token', token);
-    sessionStorage.setItem('user_email', email);
+    sessionStorage.setItem('user_email', realEmail);
     sessionStorage.setItem('user_name', displayName);
     sessionStorage.setItem('user_is_admin', isAdmin ? 'true' : 'false');
     if (displayName) localStorage.setItem('neolia_customer_name', displayName);
@@ -1147,12 +1218,22 @@ ACCOUNT_HTML = r"""<!DOCTYPE html>
 (function () {
   const $ = id => document.getElementById(id);
   const CFG = window.APP_CONFIG || {};
-  const email = sessionStorage.getItem('user_email');
+  let email = sessionStorage.getItem('user_email');
   const token = sessionStorage.getItem('jwt_token');
 
   if (!email || !token) {
-  window.location.replace('/login?next=account');
-  return;
+    window.location.replace('/login?next=account');
+    return;
+  }
+
+  if (token && (!email || !email.includes('@')) && window.parseJwt) {
+    try {
+      const p = window.parseJwt(token);
+      if (p && p.email) {
+        email = p.email;
+        sessionStorage.setItem('user_email', email);
+      }
+    } catch (_) {}
   }
 
   let displayName = sessionStorage.getItem('user_name') || localStorage.getItem('neolia_customer_name') || email;
@@ -1231,6 +1312,14 @@ ACCOUNT_HTML = r"""<!DOCTYPE html>
       $('profile-nom').value = availableAttributes.family_name || '';
       $('profile-address').value = availableAttributes.address || '';
       $('profile-phone').value = availableAttributes.phone_number || '';
+
+      if (availableAttributes.email) {
+        email = availableAttributes.email;
+        sessionStorage.setItem('user_email', email);
+      }
+      if (availableAttributes.address) {
+        localStorage.setItem('neolia_customer_address', availableAttributes.address);
+      }
 
       const fullName = (availableAttributes.given_name ? (availableAttributes.given_name + ' ' + (availableAttributes.family_name || '')) : availableAttributes.name) || '';
       if (fullName) {
@@ -2163,6 +2252,14 @@ class ShopHandler(BaseHTTPRequestHandler):
         query = urllib.parse.parse_qs(parsed.query)
         email = query.get("email", [""])[0]
 
+        if token:
+            claims = decode_jwt_payload(token)
+            groups = claims.get("cognito:groups", [])
+            if isinstance(groups, list) and "admin" in groups:
+                return True
+            if not email and claims.get("email"):
+                email = claims.get("email")
+
         if not token and not email:
             return False
 
@@ -2312,6 +2409,13 @@ class ShopHandler(BaseHTTPRequestHandler):
             # 7. Compte utilisateur : Commandes & statut
             if path in ["/api/user/orders", "/api/orders"]:
                 email = query.get("email", [""])[0] or query.get("customer_email", [""])[0]
+                auth_header = self.headers.get("Authorization", "")
+                if (not email or not re.match(r"^\S+@\S+\.\S+$", email)) and auth_header.startswith("Bearer "):
+                    jwt_token = auth_header.split(" ", 1)[1].strip()
+                    jwt_claims = decode_jwt_payload(jwt_token)
+                    if jwt_claims.get("email"):
+                        email = jwt_claims.get("email")
+
                 # Si aucune adresse email n'est précisée, c'est une consultation globale réservée à l'administrateur
                 if not email and not self._is_admin():
                     self._send_json(403, {"status": "ERROR", "statusCode": 403, "error": "Accès réservé aux administrateurs."})
@@ -2396,6 +2500,28 @@ class ShopHandler(BaseHTTPRequestHandler):
 
                 if not items and body.get("product_id"):
                     items = [{"product_id": body.get("product_id"), "qty": body.get("qty", 1)}]
+
+                auth_header = self.headers.get("Authorization", "")
+                jwt_claims = {}
+                if auth_header.startswith("Bearer "):
+                    jwt_token = auth_header.split(" ", 1)[1].strip()
+                    jwt_claims = decode_jwt_payload(jwt_token)
+
+                jwt_email = jwt_claims.get("email") or ""
+                jwt_name = jwt_claims.get("name") or (
+                    jwt_claims.get("given_name", "") + " " + jwt_claims.get("family_name", "")
+                ).strip()
+
+                # Si l'email reçu n'est pas un email valide (ex: UUID Cognito sans @), on utilise l'email du JWT
+                if (not customer_email or not re.match(r"^\S+@\S+\.\S+$", customer_email)) and jwt_email:
+                    customer_email = jwt_email
+
+                # Si le nom est manquant, on utilise le nom extrait de Cognito ou le préfixe de l'email
+                if not customer_name:
+                    if jwt_name:
+                        customer_name = jwt_name
+                    elif customer_email and "@" in customer_email:
+                        customer_name = customer_email.split("@")[0]
 
                 if not customer_name or not re.match(r"^\S+@\S+\.\S+$", customer_email) or not isinstance(items, list) or not items:
                     self._send_json(400, {"error": "Nom, e-mail et au moins un article sont requis."})
