@@ -789,28 +789,36 @@ if (currentUser) {
       new AmazonCognitoIdentity.CognitoUserAttribute({ Name: 'address', Value: address })
     ];
 
-    pool.signUp(email, password, attributes, null, async error => {
-      if (error) {
-        $('register-status').textContent = error.message;
-        return;
-      }
+   pool.signUp(email, password, attributes, null, async (error, result) => {
+    if (error) {
+    $('register-status').textContent = error.message;
+    return;
+    }
 
-      pendingEmail = email;
-      localStorage.setItem('neolia_customer_name', name);
-      // Compte activé immédiatement sans vérification requise
-      $('register-status').textContent =
-        'Compte créé avec succès ! Connectez-vous ci-contre.';
-      $('login-email').value = email;
-      $('login-password').focus();
+    pendingEmail = email;
+    localStorage.setItem('neolia_customer_name', fullName);
+   localStorage.setItem('neolia_customer_address', address);
+   $('login-email').value = email;
 
-      try {
-        await fetch('/api/subscribe', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({email})
-        });
-      } catch (_) {}
+    if (result && result.userConfirmed) {
+    $('confirm-panel').hidden = true;
+    $('register-status').textContent =
+      'Compte confirmé. Vous pouvez vous connecter.';
+    $('login-password').focus();
+    } else {
+    $('confirm-panel').hidden = false;
+    $('register-status').textContent =
+      'Compte créé. Saisissez le code reçu par e-mail.';
+    $('confirm-code').focus();
+    }
+
+    try {
+    await fetch('/api/subscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email })
     });
+  } catch (_) {}
   });
 
   $('confirm-button').addEventListener('click', function () {
@@ -1000,8 +1008,8 @@ ACCOUNT_HTML = r"""<!DOCTYPE html>
         return;
       }
 
-      localStorage.setItem('neolia_customer_name', name);
-      availableAttributes.name = name;
+      localStorage.setItem('neolia_customer_name', fullName);
+      availableAttributes.name = fullName;
 
       if (phone) {
         availableAttributes.phone_number = phone;
