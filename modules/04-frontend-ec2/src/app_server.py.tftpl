@@ -1651,6 +1651,35 @@ class ShopHandler(BaseHTTPRequestHandler):
                 self._send_json(200, {"instance": INSTANCE_ID, "region": REGION, "launch_template": SPOT_LT_ID})
                 return
 
+            # Stress test CPU pour valider l'Auto Scaling (Scale-Out)
+            if path == "/api/stress":
+                try:
+                    duration = int(query.get("seconds", ["120"])[0])
+                except (TypeError, ValueError):
+                    duration = 120
+                duration = min(max(duration, 5), 600)
+
+                import time
+                import threading
+
+                def _burn(sec):
+                    end_time = time.time() + sec
+                    while time.time() < end_time:
+                        _ = [x * x for x in range(10000)]
+
+                for _ in range(2):
+                    t = threading.Thread(target=_burn, args=(duration,), daemon=True)
+                    t.start()
+
+                self._send_json(200, {
+                    "status": "STRESS_ACTIVE",
+                    "instance": INSTANCE_ID,
+                    "target_cpu": "100%",
+                    "duration_seconds": duration,
+                    "message": f"Stress CPU 100% active sur {INSTANCE_ID} pendant {duration}s pour tester l'Auto Scaling !"
+                })
+                return
+
             # 4. Catalogue : Tous les produits (Délégué à la Lambda backend)
             if path == "/api/products":
                 code, res = self._invoke_lambda({"action": "list_products"})
