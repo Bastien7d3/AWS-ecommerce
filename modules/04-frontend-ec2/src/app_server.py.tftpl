@@ -10,7 +10,9 @@ import re
 import urllib.parse
 import urllib.request
 from decimal import Decimal
-from http.server import HTTPServer, BaseHTTPRequestHandler
+import sys
+import subprocess
+from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 
 import boto3
 from botocore.config import Config
@@ -1786,17 +1788,10 @@ class ShopHandler(BaseHTTPRequestHandler):
                     duration = 120
                 duration = min(max(duration, 5), 600)
 
-                import time
-                import threading
-
-                def _burn(sec):
-                    end_time = time.time() + sec
-                    while time.time() < end_time:
-                        _ = [x * x for x in range(10000)]
-
+                # Processus OS independants pour saturer les 2 vCPUs a 100% sans bloquer le serveur HTTP ni les health checks
+                burn_code = "import time\nend = time.time() + " + str(duration) + "\nwhile time.time() < end:\n    _ = sum(i*i for i in range(50000))\n"
                 for _ in range(2):
-                    t = threading.Thread(target=_burn, args=(duration,), daemon=True)
-                    t.start()
+                    subprocess.Popen([sys.executable, "-c", burn_code])
 
                 self._send_json(200, {
                     "status": "STRESS_ACTIVE",
@@ -2110,4 +2105,4 @@ if __name__ == "__main__":
         f"| {INSTANCE_ID} | région {REGION}",
         flush=True,
     )
-    HTTPServer(("0.0.0.0", 80), ShopHandler).serve_forever()
+    ThreadingHTTPServer(("0.0.0.0", 80), ShopHandler).serve_forever()
