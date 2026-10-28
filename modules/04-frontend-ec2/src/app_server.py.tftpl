@@ -1218,11 +1218,30 @@ ACCOUNT_HTML = r"""<!DOCTYPE html>
 (function () {
   const $ = id => document.getElementById(id);
   const CFG = window.APP_CONFIG || {};
-  let email = sessionStorage.getItem('user_email');
-  const token = sessionStorage.getItem('jwt_token');
 
-  if (!email || !token) {
-    window.location.replace('/login?next=account');
+  const pool = new AmazonCognitoIdentity.CognitoUserPool({
+    UserPoolId: CFG.userPoolId,
+    ClientId: CFG.userPoolClientId
+  });
+
+  const currentUser = pool.getCurrentUser();
+  let email = sessionStorage.getItem('user_email');
+  let token = sessionStorage.getItem('jwt_token');
+
+  function clearSessionAndRedirect() {
+    if (currentUser) {
+      try { currentUser.signOut(); } catch (_) {}
+    }
+    sessionStorage.removeItem('jwt_token');
+    sessionStorage.removeItem('user_email');
+    sessionStorage.removeItem('user_name');
+    sessionStorage.removeItem('user_is_admin');
+    window.location.replace('/login');
+  }
+
+  // Si pas de session Cognito en local et aucun token/email en sessionStorage
+  if (!currentUser && (!email || !token)) {
+    clearSessionAndRedirect();
     return;
   }
 
@@ -1236,9 +1255,9 @@ ACCOUNT_HTML = r"""<!DOCTYPE html>
     } catch (_) {}
   }
 
-  let displayName = sessionStorage.getItem('user_name') || localStorage.getItem('neolia_customer_name') || email;
+  let displayName = sessionStorage.getItem('user_name') || localStorage.getItem('neolia_customer_name') || email || 'Mon compte';
   const navNameEl = $('account-nav-name');
-  if (navNameEl) navNameEl.textContent = displayName;
+  if (navNameEl && displayName) navNameEl.textContent = displayName;
 
   const isAdminStored = sessionStorage.getItem('user_is_admin') === 'true';
   if (isAdminStored && $('account-nav') && !$('account-nav-admin')) {
@@ -1247,19 +1266,9 @@ ACCOUNT_HTML = r"""<!DOCTYPE html>
     adminLink.className = 'nav-admin-badge';
     adminLink.href = '/admin';
     adminLink.textContent = '👑 Administration';
-    const navUserEl = navNameEl.closest('.nav-user-badge');
-    $('account-nav').insertBefore(adminLink, navUserEl);
+    const navUserEl = navNameEl ? navNameEl.closest('.nav-user-badge') : null;
+    if (navUserEl) $('account-nav').insertBefore(adminLink, navUserEl);
   }
-
-  const pool = new AmazonCognitoIdentity.CognitoUserPool({
-    UserPoolId: CFG.userPoolId,
-    ClientId: CFG.userPoolClientId
-  });
-
-  const user = new AmazonCognitoIdentity.CognitoUser({
-    Username: email,
-    Pool: pool
-  });
 
   let availableAttributes = {};
 
@@ -1267,72 +1276,102 @@ ACCOUNT_HTML = r"""<!DOCTYPE html>
     $('profile-status').textContent = message;
   }
 
-  user.getSession((error, session) => {
-    if (error || !session || !session.isValid()) {
-      sessionStorage.removeItem('jwt_token');
-      sessionStorage.removeItem('user_email');
-      sessionStorage.removeItem('user_name');
-      sessionStorage.removeItem('user_is_admin');
-      window.location.replace('/login?next=account');
-      return;
-    }
-
-    try {
-      const payload = session.getIdToken().decodePayload();
-      if (payload) {
-        const groups = payload['cognito:groups'] || [];
-        if (Array.isArray(groups) && groups.includes('admin')) {
-          sessionStorage.setItem('user_is_admin', 'true');
-          if ($('account-nav') && !$('account-nav-admin')) {
-            const adminLink = document.createElement('a');
-            adminLink.id = 'account-nav-admin';
-            adminLink.className = 'nav-admin-badge';
-            adminLink.href = '/admin';
-            adminLink.textContent = '👑 Administration';
-            const navUserEl = $('account-nav-name').closest('.nav-user-badge');
-            $('account-nav').insertBefore(adminLink, navUserEl);
-          }
-        }
-      }
-    } catch (_) {}
-
-    user.getUserAttributes((attributeError, attributes) => {
-      if (attributeError) {
-        showError(attributeError.message);
+  if (currentUser) {
+    currentUser.getSession((error, session) => {
+      if (error || !session || !session.isValid()) {
+        clearSessionAndRedirect();
         return;
       }
 
-      availableAttributes = {};
-      (attributes || []).forEach(attribute => {
-        availableAttributes[attribute.getName()] = attribute.getValue();
+      token = session.getIdToken().getJwtToken();
+      sessionStorage.setItem('jwt_token', token);
+
+      try {
+        const payload = session.getIdToken().decodePayload();
+        if (payload) {
+          if (payload.email) {
+            email = payload.email;
+            sessionStorage.setItem('user_email', email);
+          }
+          if (payload.name) {
+            displayName = payload.name;
+            sessionStorage.setItem('user_name', displayName);
+          } else if (payload.given_name) {
+            displayName = (payload.given_name + ' ' + (payload.family_name || '')).trim();
+            sessionStorage.setItem('user_name', displayName);
+          }
+          if (payload.address) {
+            localStorage.setItem('neolia_customer_address', payload.address);
+          }
+          const groups = payload['cognito:groups'] || [];
+          if (Array.isArray(groups) && groups.includes('admin')) {
+            sessionStorage.setItem('user_is_admin', 'true');
+            if ($('account-nav') && !$('account-nav-admin')) {
+              const adminLink = document.createElement('a');
+              adminLink.id = 'account-nav-admin';
+              adminLink.className = 'nav-admin-badge';
+              adminLink.href = '/admin';
+              adminLink.textContent = '👑 Administration';
+              const navUserEl = navNameEl ? navNameEl.closest('.nav-user-badge') : null;
+              if (navUserEl) $('account-nav').insertBefore(adminLink, navUserEl);
+            }
+          }
+        }
+      } catch (_) {}
+
+      displayName = displayName || email;
+      if (displayName && navNameEl) {
+        navNameEl.textContent = displayName;
+      }
+
+      currentUser.getUserAttributes((attributeError, attributes) => {
+        if (attributeError) {
+          showError(attributeError.message);
+          return;
+        }
+
+        availableAttributes = {};
+        (attributes || []).forEach(attribute => {
+          availableAttributes[attribute.getName()] = attribute.getValue();
+        });
+
+        $('profile-email').value = availableAttributes.email || email || '';
+        $('profile-prenom').value = availableAttributes.given_name || '';
+        $('profile-nom').value = availableAttributes.family_name || '';
+        $('profile-address').value = availableAttributes.address || '';
+        $('profile-phone').value = availableAttributes.phone_number || '';
+
+        if (availableAttributes.email) {
+          email = availableAttributes.email;
+          sessionStorage.setItem('user_email', email);
+        }
+        if (availableAttributes.address) {
+          localStorage.setItem('neolia_customer_address', availableAttributes.address);
+        }
+
+        const fullName = (availableAttributes.given_name ? (availableAttributes.given_name + ' ' + (availableAttributes.family_name || '')) : availableAttributes.name) || '';
+        if (fullName) {
+          const cleanName = fullName.trim();
+          localStorage.setItem('neolia_customer_name', cleanName);
+          sessionStorage.setItem('user_name', cleanName);
+          if (navNameEl) navNameEl.textContent = cleanName;
+        }
       });
 
-      $('profile-email').value = availableAttributes.email || email;
-      $('profile-prenom').value = availableAttributes.given_name || '';
-      $('profile-nom').value = availableAttributes.family_name || '';
-      $('profile-address').value = availableAttributes.address || '';
-      $('profile-phone').value = availableAttributes.phone_number || '';
-
-      if (availableAttributes.email) {
-        email = availableAttributes.email;
-        sessionStorage.setItem('user_email', email);
-      }
-      if (availableAttributes.address) {
-        localStorage.setItem('neolia_customer_address', availableAttributes.address);
-      }
-
-      const fullName = (availableAttributes.given_name ? (availableAttributes.given_name + ' ' + (availableAttributes.family_name || '')) : availableAttributes.name) || '';
-      if (fullName) {
-        const cleanName = fullName.trim();
-        localStorage.setItem('neolia_customer_name', cleanName);
-        sessionStorage.setItem('user_name', cleanName);
-        if ($('account-nav-name')) $('account-nav-name').textContent = cleanName;
-      }
+      loadUserOrders();
     });
-  });
+  } else {
+    if (email) $('profile-email').value = email;
+    loadUserOrders();
+  }
 
   $('profile-form').addEventListener('submit', event => {
     event.preventDefault();
+
+    if (!currentUser) {
+      showError('Session expirée. Veuillez vous reconnecter.');
+      return;
+    }
 
     const prenom = $('profile-prenom').value.trim();
     const nom = $('profile-nom').value.trim();
@@ -1350,7 +1389,7 @@ ACCOUNT_HTML = r"""<!DOCTYPE html>
     $('save-profile').disabled = true;
     showError('Enregistrement en cours…');
 
-    user.updateAttributes(attributes, error => {
+    currentUser.updateAttributes(attributes, error => {
       $('save-profile').disabled = false;
 
       if (error) {
@@ -1373,12 +1412,7 @@ ACCOUNT_HTML = r"""<!DOCTYPE html>
   });
 
   function doSignOut() {
-    if (user) user.signOut();
-    sessionStorage.removeItem('jwt_token');
-    sessionStorage.removeItem('user_email');
-    sessionStorage.removeItem('user_name');
-    sessionStorage.removeItem('user_is_admin');
-    window.location.href = '/login';
+    clearSessionAndRedirect();
   }
 
   $('logout').addEventListener('click', doSignOut);
@@ -1390,7 +1424,15 @@ ACCOUNT_HTML = r"""<!DOCTYPE html>
 
   async function loadUserOrders() {
     try {
-      const resp = await fetch('/api/user/orders?email=' + encodeURIComponent(email), {cache:'no-store'});
+      const emailToUse = email || sessionStorage.getItem('user_email') || '';
+      const tokenToUse = token || sessionStorage.getItem('jwt_token') || '';
+      const headers = {};
+      if (tokenToUse) headers['Authorization'] = 'Bearer ' + tokenToUse;
+
+      const resp = await fetch('/api/user/orders?email=' + encodeURIComponent(emailToUse), {
+        headers: headers,
+        cache: 'no-store'
+      });
       if (!resp.ok) {
         $('orders-list').innerHTML = '<p class="status">Impossible de charger l\'historique des commandes.</p>';
         return;
