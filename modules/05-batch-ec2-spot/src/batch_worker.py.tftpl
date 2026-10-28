@@ -513,6 +513,7 @@ def main():
             if not clean_addr or clean_addr in ["[object Object]", "undefined", "null"]:
                 clean_addr = "2 Rue de Lille, 75007 Paris" if "bastien" in customer_email.lower() else "12 Rue de la Paix, 75002 Paris"
 
+            account_url = f"{front_url}/account" if front_url else invoice_link
             email_subject = f"[NEOLIA] Votre commande {order_id} a ete expediee"
             email_body = (
                 f"Bonjour {customer_display},\n\n"
@@ -523,8 +524,8 @@ def main():
                 f"- Numero de suivi : {tracking_number}\n"
                 f"- Mode d'envoi : Colissimo ({packing['box_label']})\n"
                 f"- Montant total regle : {total_ttc:.2f} EUR\n\n"
-                f"Vous pouvez consulter et telecharger votre facture officielle a l'adresse suivante :\n"
-                f"{invoice_link}\n\n"
+                f"Vous pouvez consulter et telecharger votre facture officielle en vous connectant a votre espace client NEOLIA :\n"
+                f"{account_url}\n\n"
                 f"Toute l'equipe NEOLIA vous remercie pour votre confiance.\n\n"
                 f"Bien chaleureusement,\n"
                 f"L'equipe NEOLIA Paris\n"

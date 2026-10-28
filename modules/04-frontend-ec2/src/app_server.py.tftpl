@@ -13,6 +13,7 @@ import urllib.request
 from decimal import Decimal
 import sys
 import subprocess
+import time
 from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 
 import boto3
@@ -91,8 +92,7 @@ CONFIG_JS = (
     "userPoolClientId:%s,region:%s};\n"
     "window.parseJwt=function(t){try{var b=(t||'').split('.')[1];if(!b)return null;b=b.replace(/-/g,'+').replace(/_/g,'/');"
     "return JSON.parse(decodeURIComponent(atob(b).split('').map(function(c){return'%%'+('00'+c.charCodeAt(0).toString(16)).slice(-2);}).join('')));"
-    "}catch(e){return null;}};
-"
+    "}catch(e){return null;}};\n"
     "window.cleanAddress=function(a){if(!a)return '';if(typeof a==='object'&&a!==null){return (a.formatted||a.street_address||a.address||'').trim();}if(typeof a==='string'){if(a==='[object Object]'||a==='undefined'||a==='null')return '';try{var p=JSON.parse(a);if(p&&typeof p==='object')return (p.formatted||p.street_address||p.address||'').trim();}catch(_){}return a.trim();}return String(a).trim();};"
     % (
         json.dumps(USER_POOL_ID),
@@ -705,7 +705,7 @@ $('order').addEventListener('click', async () => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + token
+        'Authorization': 'Bearer ' + (token || sessionStorage.getItem('jwt_token') || localStorage.getItem('jwt_token') || '')
       },
       body: JSON.stringify({
         items,
@@ -1464,7 +1464,7 @@ ACCOUNT_HTML = r"""<!DOCTYPE html>
           <p style="margin:0.4rem 0; font-size:0.88rem; color:#a5a5b5;">Enregistrée le : $${esc(o.created_at || '-')}</p>
           <p style="margin:0.4rem 0;">$${esc(o.product_summary || '-')} $${o.total_eur !== undefined ? '— <strong>'+eur(o.total_eur)+'</strong>' : ''}</p>
           $${o.tracking_number ? '<p style="margin:0.3rem 0; font-size:0.85rem; color:#7EDCC5;">📦 Colis expédié : <strong>'+esc(o.tracking_number)+'</strong> (Carton '+esc(o.box_size || 'M')+')</p>' : ''}
-          $${o.pdf_url ? '<p style="margin-top:0.6rem;"><a href="'+esc(o.pdf_url)+'" target="_blank" rel="noopener" style="color:#FFB4C8; text-decoration:underline; font-weight:600;">📄 Télécharger la facture PDF</a></p>' : ''}
+          $${o.pdf_url ? '<p style="margin-top:0.6rem;"><a href="'+esc(o.pdf_url + (tokenToUse ? '&token=' + encodeURIComponent(tokenToUse) : ''))+'" target="_blank" rel="noopener" style="color:#FFB4C8; text-decoration:underline; font-weight:600;">📄 Télécharger la facture PDF</a></p>' : ''}
         </div>`;
       }).join('');
     } catch (_) {
@@ -1739,7 +1739,7 @@ async function load() {
           $${o.tracking_number ? '<br><small>Suivi : '+esc(o.tracking_number)+'</small>' : ''}
         </td>
         <td>$${o.pdf_url
-          ? '<a href="'+esc(o.pdf_url)+'" target="_blank" rel="noopener">Ouvrir la facture</a>'
+          ? '<a href="'+esc(o.pdf_url + (adminUserToken ? '&token=' + encodeURIComponent(adminUserToken) : ''))+'" target="_blank" rel="noopener">Ouvrir la facture</a>'
           : '—'}
         </td>
       </tr>`).join('')
@@ -1772,7 +1772,7 @@ verifyAdminAccess().then(isAuthorized => {
   if (CFG.spot) {
     $('spot').hidden = false;
 
-    fetch('/api/info', {cache:'no-store'})
+    fetch('/api/info', {headers: adminUserToken ? {'Authorization': 'Bearer ' + adminUserToken} : {}, cache:'no-store'})
       .then(response => response.json())
       .then(data => {
         $('infra').textContent =
@@ -2293,40 +2293,56 @@ class ShopHandler(BaseHTTPRequestHandler):
         except Exception as exc:
             return 500, {"error": f"Erreur lors de l'appel Lambda : {str(exc)}"}
 
-    def _is_admin(self):
-        """Vérifie si la requête appelante possède les droits administrateur (groupe Cognito admin)."""
+    def _get_auth_user(self):
+        """
+        Extrait et authentifie l'utilisateur via son jeton Cognito JWT (Bearer header ou paramètre ?token=).
+        Retourne : (is_authenticated: bool, claims: dict, user_email: str, is_admin: bool)
+        """
         auth_header = self.headers.get("Authorization", "")
         token = ""
         if auth_header.startswith("Bearer "):
             token = auth_header.split(" ", 1)[1].strip()
+        if not token:
+            parsed = urllib.parse.urlparse(self.path)
+            query = urllib.parse.parse_qs(parsed.query)
+            token = query.get("token", [""])[0].strip()
 
-        parsed = urllib.parse.urlparse(self.path)
-        query = urllib.parse.parse_qs(parsed.query)
-        email = query.get("email", [""])[0]
+        if not token:
+            return False, {}, "", False
 
-        if token:
-            claims = decode_jwt_payload(token)
-            groups = claims.get("cognito:groups", [])
-            if isinstance(groups, list) and "admin" in groups:
-                return True
-            if not email and claims.get("email"):
-                email = claims.get("email")
+        claims = decode_jwt_payload(token)
+        if not claims or not isinstance(claims, dict):
+            return False, {}, "", False
 
-        if not token and not email:
-            return False
+        # Vérification de l'expiration du jeton
+        exp = claims.get("exp")
+        if exp and isinstance(exp, (int, float)):
+            if time.time() > exp:
+                return False, {}, "", False
 
-        try:
-            code, res = self._invoke_lambda({
-                "action": "admin_check",
-                "email": email,
-                "access_token": token,
-                "headers": dict(self.headers),
-            })
-            if code == 200 and isinstance(res, dict) and res.get("is_admin") is True:
-                return True
-        except Exception:
-            pass
-        return False
+        # Vérification de l'émetteur Cognito
+        expected_iss = f"https://cognito-idp.{REGION}.amazonaws.com/{USER_POOL_ID}"
+        if claims.get("iss") and claims.get("iss") != expected_iss:
+            return False, {}, "", False
+
+        # Extraction sécurisée de l'email
+        email = claims.get("email") or ""
+        if not email and claims.get("cognito:username") and "@" in str(claims.get("cognito:username")):
+            email = str(claims.get("cognito:username"))
+
+        # Groupes Cognito
+        groups = claims.get("cognito:groups") or []
+        is_admin = isinstance(groups, list) and "admin" in groups
+
+        if not email and claims.get("sub"):
+            email = claims.get("username") or claims.get("sub")
+
+        return True, claims, email, is_admin
+
+    def _is_admin(self):
+        """Vérifie si la requête appelante possède les droits administrateur (groupe Cognito admin)."""
+        is_auth, _, _, is_adm = self._get_auth_user()
+        return is_auth and is_adm
 
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
@@ -2352,12 +2368,38 @@ class ShopHandler(BaseHTTPRequestHandler):
                 self._send_json(200, {"status": "healthy", "instance": INSTANCE_ID})
                 return
 
-            # 2. Facture PDF officielle (streaming S3)
+            # 2. Facture PDF officielle (streaming S3 sécurisé)
             if path == "/api/invoice":
+                is_auth, claims, auth_email, is_admin = self._get_auth_user()
+                if not is_auth:
+                    self._send_json(401, {
+                        "status": "ERROR",
+                        "statusCode": 401,
+                        "error": "Authentification requise pour télécharger votre facture."
+                    })
+                    return
+
                 key = query.get("key", [""])[0]
                 if not key:
                     self._send_json(400, {"error": "Clé de facture manquante."})
                     return
+
+                # Contrôle d'accès : un client non-admin ne peut télécharger QUE sa propre facture
+                if not is_admin:
+                    m = re.search(r"CMD-[0-9A-Za-z_-]+", key)
+                    if m:
+                        order_id = m.group(0)
+                        code, order_res = self._invoke_lambda({"action": "get_order_details", "order_id": order_id})
+                        if code == 200 and isinstance(order_res, dict):
+                            order_data = order_res.get("order", order_res)
+                            order_email = order_data.get("customer_email", "")
+                            if order_email and order_email.lower() != auth_email.lower():
+                                self._send_json(403, {
+                                    "status": "ERROR",
+                                    "statusCode": 403,
+                                    "error": "Accès refusé : cette facture ne correspond pas à votre compte."
+                                })
+                                return
 
                 s3 = boto3.client(
                     "s3",
@@ -2365,10 +2407,14 @@ class ShopHandler(BaseHTTPRequestHandler):
                     endpoint_url=f"https://s3.{REGION}.amazonaws.com",
                     config=Config(signature_version="s3v4"),
                 )
-                obj = s3.get_object(Bucket=INVOICES_BUCKET, Key=key)
-                pdf_bytes = obj["Body"].read()
-                filename = key.split("/")[-1]
+                try:
+                    obj = s3.get_object(Bucket=INVOICES_BUCKET, Key=key)
+                    pdf_bytes = obj["Body"].read()
+                except Exception:
+                    self._send_json(404, {"error": "Facture introuvable."})
+                    return
 
+                filename = key.split("/")[-1]
                 self.send_response(200)
                 self.send_header("Content-Type", "application/pdf")
                 self.send_header("Content-Disposition", f'inline; filename="{filename}"')
@@ -2380,6 +2426,9 @@ class ShopHandler(BaseHTTPRequestHandler):
 
             # 3. Suivi Worker Spot & SQS
             if path == "/api/spot-status":
+                if not self._is_admin():
+                    self._send_json(403, {"status": "ERROR", "statusCode": 403, "error": "Accès réservé aux administrateurs."})
+                    return
                 sqs = boto3.client("sqs", region_name=REGION)
                 ec2 = boto3.client("ec2", region_name=REGION)
                 attrs = sqs.get_queue_attributes(
@@ -2399,11 +2448,17 @@ class ShopHandler(BaseHTTPRequestHandler):
                 return
 
             if path == "/api/info":
+                if not self._is_admin():
+                    self._send_json(403, {"status": "ERROR", "statusCode": 403, "error": "Accès réservé aux administrateurs."})
+                    return
                 self._send_json(200, {"instance": INSTANCE_ID, "region": REGION, "launch_template": SPOT_LT_ID})
                 return
 
-            # Stress test CPU pour valider l'Auto Scaling (Scale-Out)
+            # Stress test CPU pour valider l'Auto Scaling (Réservé aux administrateurs)
             if path == "/api/stress":
+                if not self._is_admin():
+                    self._send_json(403, {"error": "Accès réservé aux administrateurs."})
+                    return
                 try:
                     duration = int(query.get("seconds", ["120"])[0])
                 except (TypeError, ValueError):
@@ -2447,89 +2502,107 @@ class ShopHandler(BaseHTTPRequestHandler):
                 self._send_json(code, res)
                 return
 
-            # 6. Compte utilisateur : Profil Cognito
+            # 6. Compte utilisateur : Profil Cognito (Authentification requise)
             if path in ["/api/user/profile", "/api/me"]:
-                email = query.get("email", [""])[0]
-                code, res = self._invoke_lambda({
-                    "action": "get_user_profile",
-                    "email": email,
-                    "headers": dict(self.headers),
-                })
-                self._send_json(code, res)
-                return
-
-            # 7. Compte utilisateur et Administration : Commandes
-            if path in ["/api/user/orders", "/api/orders"]:
-                email = query.get("email", [""])[0] or query.get("customer_email", [""])[0]
-                auth_header = self.headers.get("Authorization", "")
-
-                # Sur /api/user/orders : déduire l'email depuis le jeton Bearer si absent de l'URL
-                # Sur /api/orders SANS paramètre email : consultation globale de toutes les commandes pour l'admin
-                if path == "/api/user/orders":
-                    if (not email or not re.match(r"^\S+@\S+\.\S+$", email)) and auth_header.startswith("Bearer "):
-                        jwt_token = auth_header.split(" ", 1)[1].strip()
-                        jwt_claims = decode_jwt_payload(jwt_token)
-                        if jwt_claims.get("email"):
-                            email = jwt_claims.get("email")
-
-                # Si aucune adresse email n'est précisée (consultation globale), réservé aux administrateurs
-                if not email and not self._is_admin():
-                    self._send_json(403, {"status": "ERROR", "statusCode": 403, "error": "Accès réservé aux administrateurs."})
+                is_auth, claims, auth_email, is_admin = self._get_auth_user()
+                if not is_auth:
+                    self._send_json(401, {
+                        "status": "ERROR",
+                        "statusCode": 401,
+                        "error": "Authentification requise pour accéder à votre profil."
+                    })
                     return
 
                 code, res = self._invoke_lambda({
-                    "action": "get_user_orders",
-                    "customer_email": email,
-                })
-
-                # Rétrocompatibilité avec le front admin (qui attend le tableau direct des commandes)
-                if code == 200 and isinstance(res, dict):
-                    if not email:
-                        self._send_json(200, res.get("orders", []))
-                        return
-                    elif "orders" in res and not email:
-                        self._send_json(200, res["orders"])
-                        return
-
-                self._send_json(code, res)
-                return
-
-            # 8. Détail d'une commande spécifique
-            if path == "/api/order" or re.match(r"^/api/orders/[^/]+$", path):
-                order_id = query.get("order_id", [""])[0] or query.get("id", [""])[0]
-                if not order_id and "/" in path:
-                    order_id = path.split("/")[-1]
-                code, res = self._invoke_lambda({"action": "get_order_details", "order_id": order_id})
-                self._send_json(code, res)
-                return
-
-            # 9. Admin : Vérification des privilèges
-            if path == "/api/admin/check":
-                email = query.get("email", [""])[0]
-                auth_header = self.headers.get("Authorization", "")
-                token = ""
-                if auth_header.startswith("Bearer "):
-                    token = auth_header.split(" ", 1)[1].strip()
-
-                if token:
-                    claims = decode_jwt_payload(token)
-                    groups = claims.get("cognito:groups", [])
-                    if isinstance(groups, list) and "admin" in groups:
-                        self._send_json(200, {
-                            "status": "SUCCESS",
-                            "is_admin": True,
-                            "email": email or claims.get("email", ""),
-                            "groups": groups,
-                        })
-                        return
-
-                code, res = self._invoke_lambda({
-                    "action": "admin_check",
-                    "email": email,
-                    "access_token": token,
+                    "action": "get_user_profile",
+                    "email": auth_email,
                     "headers": dict(self.headers),
                 })
                 self._send_json(code, res)
+                return
+
+            # 7. Compte utilisateur et Administration : Commandes (Authentification requise)
+            if path in ["/api/user/orders", "/api/orders"]:
+                is_auth, claims, auth_email, is_admin = self._get_auth_user()
+                if not is_auth:
+                    self._send_json(401, {
+                        "status": "ERROR",
+                        "statusCode": 401,
+                        "error": "Authentification requise pour consulter les commandes."
+                    })
+                    return
+
+                query_email = query.get("email", [""])[0] or query.get("customer_email", [""])[0]
+
+                # Règle de sécurité :
+                # - Admin : consultation de toutes les commandes si pas d'email, ou filtrage si email spécifié
+                # - Utilisateur standard : ne peut voir STRICTEMENT QUE ses propres commandes
+                if is_admin:
+                    target_email = query_email if query_email else None
+                else:
+                    target_email = auth_email
+
+                code, res = self._invoke_lambda({
+                    "action": "get_user_orders",
+                    "customer_email": target_email,
+                })
+
+                # Rétrocompatibilité front admin (tableau direct si consultation globale)
+                if code == 200 and isinstance(res, dict):
+                    if not target_email:
+                        self._send_json(200, res.get("orders", []))
+                        return
+                    self._send_json(200, res)
+                    return
+
+                self._send_json(code, res)
+                return
+
+            # 8. Détail d'une commande spécifique (Authentification requise)
+            if path == "/api/order" or re.match(r"^/api/orders/[^/]+$", path):
+                is_auth, claims, auth_email, is_admin = self._get_auth_user()
+                if not is_auth:
+                    self._send_json(401, {
+                        "status": "ERROR",
+                        "statusCode": 401,
+                        "error": "Authentification requise pour consulter les détails d'une commande."
+                    })
+                    return
+
+                order_id = query.get("order_id", [""])[0] or query.get("id", [""])[0]
+                if not order_id and "/" in path:
+                    order_id = path.split("/")[-1]
+
+                code, res = self._invoke_lambda({"action": "get_order_details", "order_id": order_id})
+
+                # Si l'utilisateur n'est pas administrateur, vérifier que la commande lui appartient
+                if code == 200 and isinstance(res, dict) and not is_admin:
+                    order_data = res.get("order", res)
+                    order_email = order_data.get("customer_email", "")
+                    if order_email and order_email.lower() != auth_email.lower():
+                        self._send_json(403, {
+                            "status": "ERROR",
+                            "statusCode": 403,
+                            "error": "Accès refusé : cette commande ne correspond pas à votre compte."
+                        })
+                        return
+
+                self._send_json(code, res)
+                return
+
+            # 9. Admin : Vérification des privilèges (Authentification requise)
+            if path == "/api/admin/check":
+                is_auth, claims, auth_email, is_admin = self._get_auth_user()
+                if not is_auth:
+                    self._send_json(401, {"status": "ERROR", "statusCode": 401, "error": "Authentification requise."})
+                    return
+
+                self._send_json(200, {
+                    "status": "SUCCESS",
+                    "is_admin": is_admin,
+                    "email": auth_email,
+                    "groups": claims.get("cognito:groups", [])
+                })
                 return
 
             # 10. Admin : Vision des stocks & métriques
@@ -2572,47 +2645,40 @@ class ShopHandler(BaseHTTPRequestHandler):
         try:
             body = self._read_json()
 
-            # 1. Validation de commande (multi-articles ou unitaire)
+            # 1. Validation de commande (multi-articles ou unitaire - Authentification requise)
             if path in ["/api/order", "/api/orders"]:
-                customer_name = str(body.get("customer_name", "")).strip()[:80]
-                customer_email = str(body.get("customer_email", "")).strip()[:120]
-                items = body.get("items")
+                is_auth, claims, auth_email, is_admin = self._get_auth_user()
+                if not is_auth or not auth_email:
+                    self._send_json(401, {
+                        "status": "ERROR",
+                        "statusCode": 401,
+                        "error": "Authentification requise. Vous devez être connecté pour passer commande."
+                    })
+                    return
 
+                items = body.get("items")
                 if not items and body.get("product_id"):
                     items = [{"product_id": body.get("product_id"), "qty": body.get("qty", 1)}]
 
-                auth_header = self.headers.get("Authorization", "")
-                jwt_claims = {}
-                if auth_header.startswith("Bearer "):
-                    jwt_token = auth_header.split(" ", 1)[1].strip()
-                    jwt_claims = decode_jwt_payload(jwt_token)
-
-                jwt_email = jwt_claims.get("email") or ""
-                jwt_name = jwt_claims.get("name") or (
-                    jwt_claims.get("given_name", "") + " " + jwt_claims.get("family_name", "")
-                ).strip()
-
-                # Si l'email reçu n'est pas un email valide (ex: UUID Cognito sans @), on utilise l'email du JWT
-                if (not customer_email or not re.match(r"^\S+@\S+\.\S+$", customer_email)) and jwt_email:
-                    customer_email = jwt_email
-
-                # Si le nom est manquant, on utilise le nom extrait de Cognito ou le préfixe de l'email
-                if not customer_name:
-                    if jwt_name:
-                        customer_name = jwt_name
-                    elif customer_email and "@" in customer_email:
-                        customer_name = customer_email.split("@")[0]
-
-                if not customer_name or not re.match(r"^\S+@\S+\.\S+$", customer_email) or not isinstance(items, list) or not items:
-                    self._send_json(400, {"error": "Nom, e-mail et au moins un article sont requis."})
+                if not isinstance(items, list) or not items:
+                    self._send_json(400, {"error": "Au moins un article est requis dans le panier."})
                     return
+
+                # Sécurité : la commande est impérativement rattachée à l'email du jeton vérifié
+                customer_email = auth_email
+                customer_name = (
+                    claims.get("name")
+                    or (claims.get("given_name", "") + " " + claims.get("family_name", "")).strip()
+                    or str(body.get("customer_name", "")).strip()[:80]
+                    or (customer_email.split("@")[0] if "@" in customer_email else "Client Néolia")
+                )
 
                 raw_address = body.get("shipping_address")
                 if isinstance(raw_address, dict):
                     raw_address = raw_address.get("formatted") or raw_address.get("street_address") or raw_address.get("address")
                 shipping_address = str(raw_address or "").strip()
                 if not shipping_address or shipping_address in ["[object Object]", "undefined", "null"]:
-                    jwt_addr = jwt_claims.get("address")
+                    jwt_addr = claims.get("address")
                     if isinstance(jwt_addr, dict):
                         shipping_address = str(jwt_addr.get("formatted") or jwt_addr.get("street_address") or "").strip()
                     elif isinstance(jwt_addr, str):
@@ -2631,7 +2697,6 @@ class ShopHandler(BaseHTTPRequestHandler):
                     "items": items,
                 })
 
-                # Rétrocompatibilité avec l'ancien front qui attend { status: 'ok', order_ids: [...] }
                 if code == 200 and isinstance(res, dict):
                     order_id = res.get("order_id")
                     res["status"] = "ok"
@@ -2723,8 +2788,18 @@ class ShopHandler(BaseHTTPRequestHandler):
                 self._send_json(200, {"status": "LAUNCHED", "instance_id": instance_id, "mode": mode})
                 return
 
-            # 6. Compte utilisateur : Modification des infos
+            # 6. Compte utilisateur : Modification des infos (Authentification requise)
             if path in ["/api/user/profile", "/api/user/update"]:
+                is_auth, claims, auth_email, is_admin = self._get_auth_user()
+                if not is_auth:
+                    self._send_json(401, {
+                        "status": "ERROR",
+                        "statusCode": 401,
+                        "error": "Authentification requise pour modifier votre profil."
+                    })
+                    return
+
+                body["email"] = auth_email
                 code, res = self._invoke_lambda({
                     "action": "update_user_profile",
                     "headers": dict(self.headers),
@@ -2772,8 +2847,18 @@ class ShopHandler(BaseHTTPRequestHandler):
         try:
             body = self._read_json()
 
-            # 1. Compte utilisateur : Modification des infos
+            # 1. Compte utilisateur : Modification des infos (Authentification requise)
             if path in ["/api/user/profile", "/api/user/update"]:
+                is_auth, claims, auth_email, is_admin = self._get_auth_user()
+                if not is_auth:
+                    self._send_json(401, {
+                        "status": "ERROR",
+                        "statusCode": 401,
+                        "error": "Authentification requise pour modifier votre profil."
+                    })
+                    return
+
+                body["email"] = auth_email
                 code, res = self._invoke_lambda({
                     "action": "update_user_profile",
                     "headers": dict(self.headers),
@@ -2782,8 +2867,11 @@ class ShopHandler(BaseHTTPRequestHandler):
                 self._send_json(code, res)
                 return
 
-            # 2. Admin : Mise à jour du stock
+            # 2. Admin : Mise à jour du stock (Réservé aux administrateurs)
             if path in ["/api/admin/stock", "/api/admin/stocks"]:
+                if not self._is_admin():
+                    self._send_json(403, {"status": "ERROR", "statusCode": 403, "error": "Accès réservé aux administrateurs."})
+                    return
                 code, res = self._invoke_lambda({
                     "action": "admin_update_stock",
                     **body,
@@ -2801,6 +2889,10 @@ class ShopHandler(BaseHTTPRequestHandler):
         query = urllib.parse.parse_qs(parsed.query)
 
         try:
+            if not self._is_admin():
+                self._send_json(403, {"status": "ERROR", "statusCode": 403, "error": "Accès réservé aux administrateurs."})
+                return
+
             body = self._read_json()
             username = body.get("username") or body.get("email") or query.get("username", [""])[0] or query.get("email", [""])[0]
 
