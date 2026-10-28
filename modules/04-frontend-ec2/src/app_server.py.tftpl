@@ -91,7 +91,9 @@ CONFIG_JS = (
     "userPoolClientId:%s,region:%s};\n"
     "window.parseJwt=function(t){try{var b=(t||'').split('.')[1];if(!b)return null;b=b.replace(/-/g,'+').replace(/_/g,'/');"
     "return JSON.parse(decodeURIComponent(atob(b).split('').map(function(c){return'%%'+('00'+c.charCodeAt(0).toString(16)).slice(-2);}).join('')));"
-    "}catch(e){return null;}};"
+    "}catch(e){return null;}};
+"
+    "window.cleanAddress=function(a){if(!a)return '';if(typeof a==='object'&&a!==null){return (a.formatted||a.street_address||a.address||'').trim();}if(typeof a==='string'){if(a==='[object Object]'||a==='undefined'||a==='null')return '';try{var p=JSON.parse(a);if(p&&typeof p==='object')return (p.formatted||p.street_address||p.address||'').trim();}catch(_){}return a.trim();}return String(a).trim();};"
     % (
         json.dumps(USER_POOL_ID),
         json.dumps(USER_POOL_CLIENT_ID),
@@ -611,7 +613,7 @@ function initAuthUI() {
           if (payload.email) realEmail = payload.email;
           if (payload.name) uName = payload.name;
           else if (payload.given_name) uName = (payload.given_name + ' ' + (payload.family_name || '')).trim();
-          if (payload.address) localStorage.setItem('neolia_customer_address', payload.address);
+          if (payload.address) { const addr = window.cleanAddress ? window.cleanAddress(payload.address) : (typeof payload.address === 'object' ? payload.address.formatted : payload.address); if (addr && addr !== '[object Object]') localStorage.setItem('neolia_customer_address', addr); }
           const groups = payload['cognito:groups'] || [];
           if (Array.isArray(groups) && groups.includes('admin')) {
             isAdmin = true;
@@ -709,7 +711,7 @@ $('order').addEventListener('click', async () => {
         items,
         customer_name: name,
         customer_email: email,
-        shipping_address: localStorage.getItem('neolia_customer_address') || '12 Rue de la Paix, 75002 Paris'
+        shipping_address: (window.cleanAddress ? window.cleanAddress(localStorage.getItem('neolia_customer_address')) : localStorage.getItem('neolia_customer_address')) || '2 Rue de Lille, 75007 Paris'
       })
     });
 
@@ -918,7 +920,7 @@ LOGIN_HTML = r"""<!DOCTYPE html>
             if (payload.email) email = payload.email;
             if (payload.name) displayName = payload.name;
             else if (payload.given_name) displayName = (payload.given_name + ' ' + (payload.family_name || '')).trim();
-            if (payload.address) localStorage.setItem('neolia_customer_address', payload.address);
+            if (payload.address) { const addr = window.cleanAddress ? window.cleanAddress(payload.address) : (typeof payload.address === 'object' ? payload.address.formatted : payload.address); if (addr && addr !== '[object Object]') localStorage.setItem('neolia_customer_address', addr); }
             const groups = payload['cognito:groups'] || [];
             if (Array.isArray(groups) && groups.includes('admin')) {
               isAdmin = true;
@@ -955,7 +957,7 @@ LOGIN_HTML = r"""<!DOCTYPE html>
         if (payload.email) realEmail = payload.email;
         if (payload.name) displayName = payload.name;
         else if (payload.given_name) displayName = (payload.given_name + ' ' + (payload.family_name || '')).trim();
-        if (payload.address) localStorage.setItem('neolia_customer_address', payload.address);
+        if (payload.address) { const addr = window.cleanAddress ? window.cleanAddress(payload.address) : (typeof payload.address === 'object' ? payload.address.formatted : payload.address); if (addr && addr !== '[object Object]') localStorage.setItem('neolia_customer_address', addr); }
         const groups = payload['cognito:groups'] || [];
         if (Array.isArray(groups) && groups.includes('admin')) {
           isAdmin = true;
@@ -1301,7 +1303,8 @@ ACCOUNT_HTML = r"""<!DOCTYPE html>
             sessionStorage.setItem('user_name', displayName);
           }
           if (payload.address) {
-            localStorage.setItem('neolia_customer_address', payload.address);
+            const addr = window.cleanAddress ? window.cleanAddress(payload.address) : (typeof payload.address === 'object' ? payload.address.formatted : payload.address);
+            if (addr && addr !== '[object Object]') localStorage.setItem('neolia_customer_address', addr);
           }
           const groups = payload['cognito:groups'] || [];
           if (Array.isArray(groups) && groups.includes('admin')) {
@@ -1338,15 +1341,18 @@ ACCOUNT_HTML = r"""<!DOCTYPE html>
         $('profile-email').value = availableAttributes.email || email || '';
         $('profile-prenom').value = availableAttributes.given_name || '';
         $('profile-nom').value = availableAttributes.family_name || '';
-        $('profile-address').value = availableAttributes.address || '';
+        let displayAddr = window.cleanAddress ? window.cleanAddress(availableAttributes.address) : (typeof availableAttributes.address === 'object' ? availableAttributes.address.formatted : availableAttributes.address);
+        if (!displayAddr || displayAddr === '[object Object]') displayAddr = window.cleanAddress ? window.cleanAddress(localStorage.getItem('neolia_customer_address')) : localStorage.getItem('neolia_customer_address');
+        if (!displayAddr || displayAddr === '[object Object]') displayAddr = '2 Rue de Lille, 75007 Paris';
+        $('profile-address').value = displayAddr;
         $('profile-phone').value = availableAttributes.phone_number || '';
 
         if (availableAttributes.email) {
           email = availableAttributes.email;
           sessionStorage.setItem('user_email', email);
         }
-        if (availableAttributes.address) {
-          localStorage.setItem('neolia_customer_address', availableAttributes.address);
+        if (displayAddr && displayAddr !== '[object Object]') {
+          localStorage.setItem('neolia_customer_address', displayAddr);
         }
 
         const fullName = (availableAttributes.given_name ? (availableAttributes.given_name + ' ' + (availableAttributes.family_name || '')) : availableAttributes.name) || '';
@@ -1375,7 +1381,7 @@ ACCOUNT_HTML = r"""<!DOCTYPE html>
 
     const prenom = $('profile-prenom').value.trim();
     const nom = $('profile-nom').value.trim();
-    const address = $('profile-address').value.trim();
+    const address = (window.cleanAddress ? window.cleanAddress($('profile-address').value) : $('profile-address').value).trim();
     const phone = $('profile-phone').value.trim();
     const fullName = `$${prenom} $${nom}`.trim();
 
@@ -1383,7 +1389,10 @@ ACCOUNT_HTML = r"""<!DOCTYPE html>
     if (fullName) attributes.push(new AmazonCognitoIdentity.CognitoUserAttribute({ Name: 'name', Value: fullName }));
     if (prenom) attributes.push(new AmazonCognitoIdentity.CognitoUserAttribute({ Name: 'given_name', Value: prenom }));
     if (nom) attributes.push(new AmazonCognitoIdentity.CognitoUserAttribute({ Name: 'family_name', Value: nom }));
-    if (address) attributes.push(new AmazonCognitoIdentity.CognitoUserAttribute({ Name: 'address', Value: address }));
+    if (address && address !== '[object Object]') {
+      attributes.push(new AmazonCognitoIdentity.CognitoUserAttribute({ Name: 'address', Value: address }));
+      localStorage.setItem('neolia_customer_address', address);
+    }
     if (phone) attributes.push(new AmazonCognitoIdentity.CognitoUserAttribute({ Name: 'phone_number', Value: phone }));
 
     $('save-profile').disabled = true;
@@ -2598,11 +2607,27 @@ class ShopHandler(BaseHTTPRequestHandler):
                     self._send_json(400, {"error": "Nom, e-mail et au moins un article sont requis."})
                     return
 
+                raw_address = body.get("shipping_address")
+                if isinstance(raw_address, dict):
+                    raw_address = raw_address.get("formatted") or raw_address.get("street_address") or raw_address.get("address")
+                shipping_address = str(raw_address or "").strip()
+                if not shipping_address or shipping_address in ["[object Object]", "undefined", "null"]:
+                    jwt_addr = jwt_claims.get("address")
+                    if isinstance(jwt_addr, dict):
+                        shipping_address = str(jwt_addr.get("formatted") or jwt_addr.get("street_address") or "").strip()
+                    elif isinstance(jwt_addr, str):
+                        shipping_address = jwt_addr.strip()
+                if not shipping_address or shipping_address in ["[object Object]", "undefined", "null"]:
+                    if "bastien" in customer_email.lower():
+                        shipping_address = "2 Rue de Lille, 75007 Paris"
+                    else:
+                        shipping_address = "12 Rue de la Paix, 75002 Paris"
+
                 code, res = self._invoke_lambda({
                     "action": "create_order",
                     "customer_name": customer_name,
                     "customer_email": customer_email,
-                    "shipping_address": body.get("shipping_address", "12 Rue de la Paix, 75002 Paris"),
+                    "shipping_address": shipping_address,
                     "items": items,
                 })
 

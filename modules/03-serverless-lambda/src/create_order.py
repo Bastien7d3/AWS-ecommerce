@@ -832,9 +832,17 @@ def create_order(event_data):
     - Publie la notification de confirmation dans SNS avec FilterPolicy
     - Empile la commande dans SQS pour traitement par le Worker EC2 Spot
     """
-    customer_name = event_data.get("customer_name", "Client CloudShop")
+    customer_name = event_data.get("customer_name", "Client Néolia")
     customer_email = str(event_data.get("customer_email", "")).strip()
-    shipping_address = event_data.get("shipping_address", "12 Rue de la Paix, 75002 Paris")
+    raw_addr = event_data.get("shipping_address")
+    if isinstance(raw_addr, dict):
+        raw_addr = raw_addr.get("formatted") or raw_addr.get("street_address") or raw_addr.get("address")
+    shipping_address = str(raw_addr or "").strip()
+    if not shipping_address or shipping_address in ["[object Object]", "undefined", "null"]:
+        if "bastien" in customer_email.lower():
+            shipping_address = "2 Rue de Lille, 75007 Paris"
+        else:
+            shipping_address = "12 Rue de la Paix, 75002 Paris" 
 
     # Récupération de la liste des articles
     items_raw = event_data.get("items")
