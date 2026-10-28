@@ -663,11 +663,17 @@ LOGIN_HTML = r"""<!DOCTYPE html>
     <section class="auth-card">
       <h2>Créer un compte</h2>
       <form id="register-form">
-        <label for="register-name">Nom complet</label>
-        <input id="register-name" type="text" autocomplete="name" required>
+        <label for="register-prenom">Prénom</label>
+        <input id="register-prenom" type="text" autocomplete="given-name" required>
 
-        <label for="register-email">E-mail</label>
+        <label for="register-nom">Nom</label>
+        <input id="register-nom" type="text" autocomplete="family-name" required>
+
+        <label for="register-email">Adresse e-mail</label>
         <input id="register-email" type="email" autocomplete="email" required>
+
+        <label for="register-address">Adresse postale</label>
+        <input id="register-address" type="text" autocomplete="street-address" placeholder="12 Rue de la Paix, 75002 Paris" required>
 
         <label for="register-password">Mot de passe</label>
         <input id="register-password" type="password"
@@ -766,21 +772,21 @@ if (currentUser) {
   $('register-form').addEventListener('submit', function (event) {
     event.preventDefault();
 
-    const name = $('register-name').value.trim();
+    const prenom = $('register-prenom').value.trim();
+    const nom = $('register-nom').value.trim();
+    const fullName = `$${prenom} $${nom}`.trim();
     const email = $('register-email').value.trim();
+    const address = $('register-address').value.trim();
     const password = $('register-password').value;
 
     $('register-status').textContent = 'Création du compte…';
 
     const attributes = [
-      new AmazonCognitoIdentity.CognitoUserAttribute({
-        Name: 'email',
-        Value: email
-      }),
-      new AmazonCognitoIdentity.CognitoUserAttribute({
-        Name: 'name',
-        Value: name
-      })
+      new AmazonCognitoIdentity.CognitoUserAttribute({ Name: 'email', Value: email }),
+      new AmazonCognitoIdentity.CognitoUserAttribute({ Name: 'name', Value: fullName }),
+      new AmazonCognitoIdentity.CognitoUserAttribute({ Name: 'given_name', Value: prenom }),
+      new AmazonCognitoIdentity.CognitoUserAttribute({ Name: 'family_name', Value: nom }),
+      new AmazonCognitoIdentity.CognitoUserAttribute({ Name: 'address', Value: address })
     ];
 
     pool.signUp(email, password, attributes, null, async error => {
@@ -791,9 +797,11 @@ if (currentUser) {
 
       pendingEmail = email;
       localStorage.setItem('neolia_customer_name', name);
-      $('confirm-panel').hidden = false;
-      $('confirm-status').textContent =
-        'Vérifiez votre boîte e-mail et saisissez le code reçu.';
+      // Compte activé immédiatement sans vérification requise
+      $('register-status').textContent =
+        'Compte créé avec succès ! Connectez-vous ci-contre.';
+      $('login-email').value = email;
+      $('login-password').focus();
 
       try {
         await fetch('/api/subscribe', {
@@ -871,8 +879,14 @@ ACCOUNT_HTML = r"""<!DOCTYPE html>
       <label for="profile-email">Adresse e-mail du compte</label>
       <input id="profile-email" type="email" readonly>
 
-      <label for="profile-name">Nom complet</label>
-      <input id="profile-name" type="text" autocomplete="name" required>
+      <label for="profile-prenom">Prénom</label>
+      <input id="profile-prenom" type="text" autocomplete="given-name">
+
+      <label for="profile-nom">Nom de famille</label>
+      <input id="profile-nom" type="text" autocomplete="family-name">
+
+      <label for="profile-address">Adresse postale de livraison</label>
+      <input id="profile-address" type="text" autocomplete="street-address">
 
       <label for="profile-phone">Téléphone</label>
       <input id="profile-phone" type="tel" autocomplete="tel">
@@ -884,6 +898,14 @@ ACCOUNT_HTML = r"""<!DOCTYPE html>
     <div class="profile-actions">
       <a class="profile-link" href="/">Retour à la boutique</a>
       <button type="button" class="ghost" id="logout">Se déconnecter</button>
+    </div>
+  </section>
+
+  <section class="auth-card profile-card" id="orders-section" style="margin-top:2rem;">
+    <h2>Mes commandes & statut</h2>
+    <p class="auth-intro" style="margin-bottom:1rem;">Suivez la préparation et l'expédition de vos colis en temps réel.</p>
+    <div id="orders-list">
+      <p class="status">Chargement de vos commandes en cours…</p>
     </div>
   </section>
 </main>
@@ -936,14 +958,14 @@ ACCOUNT_HTML = r"""<!DOCTYPE html>
       });
 
       $('profile-email').value = availableAttributes.email || email;
-      $('profile-name').value = availableAttributes.name || '';
+      $('profile-prenom').value = availableAttributes.given_name || '';
+      $('profile-nom').value = availableAttributes.family_name || '';
+      $('profile-address').value = availableAttributes.address || '';
       $('profile-phone').value = availableAttributes.phone_number || '';
 
-      if (availableAttributes.name) {
-        localStorage.setItem(
-          'neolia_customer_name',
-          availableAttributes.name
-        );
+      const fullName = (availableAttributes.given_name ? (availableAttributes.given_name + ' ' + (availableAttributes.family_name || '')) : availableAttributes.name) || '';
+      if (fullName) {
+        localStorage.setItem('neolia_customer_name', fullName.trim());
       }
     });
   });
@@ -951,29 +973,18 @@ ACCOUNT_HTML = r"""<!DOCTYPE html>
   $('profile-form').addEventListener('submit', event => {
     event.preventDefault();
 
-    const name = $('profile-name').value.trim();
+    const prenom = $('profile-prenom').value.trim();
+    const nom = $('profile-nom').value.trim();
+    const address = $('profile-address').value.trim();
     const phone = $('profile-phone').value.trim();
+    const fullName = `$${prenom} $${nom}`.trim();
 
-    if (!name) {
-      showError('Le nom complet est obligatoire.');
-      return;
-    }
-
-    const attributes = [
-      new AmazonCognitoIdentity.CognitoUserAttribute({
-        Name: 'name',
-        Value: name
-      })
-    ];
-
-    if (phone) {
-      attributes.push(
-        new AmazonCognitoIdentity.CognitoUserAttribute({
-          Name: 'phone_number',
-          Value: phone
-        })
-      );
-    }
+    const attributes = [];
+    if (fullName) attributes.push(new AmazonCognitoIdentity.CognitoUserAttribute({ Name: 'name', Value: fullName }));
+    if (prenom) attributes.push(new AmazonCognitoIdentity.CognitoUserAttribute({ Name: 'given_name', Value: prenom }));
+    if (nom) attributes.push(new AmazonCognitoIdentity.CognitoUserAttribute({ Name: 'family_name', Value: nom }));
+    if (address) attributes.push(new AmazonCognitoIdentity.CognitoUserAttribute({ Name: 'address', Value: address }));
+    if (phone) attributes.push(new AmazonCognitoIdentity.CognitoUserAttribute({ Name: 'phone_number', Value: phone }));
 
     $('save-profile').disabled = true;
     showError('Enregistrement en cours…');
@@ -1008,6 +1019,44 @@ ACCOUNT_HTML = r"""<!DOCTYPE html>
     // Ne pas vider neolia_cart : le panier reste présent après déconnexion.
     window.location.href = '/login';
   });
+
+  const eur = v => Number(v || 0).toLocaleString('fr-FR', {style:'currency', currency:'EUR'});
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+  async function loadUserOrders() {
+    try {
+      const resp = await fetch('/api/user/orders?email=' + encodeURIComponent(email), {cache:'no-store'});
+      if (!resp.ok) {
+        $('orders-list').innerHTML = '<p class="status">Impossible de charger l\'historique des commandes.</p>';
+        return;
+      }
+      const data = await resp.json();
+      const orders = data.orders || (Array.isArray(data) ? data : []);
+      if (!orders.length) {
+        $('orders-list').innerHTML = '<p class="status">Vous n\'avez pas encore passé de commande sur NÉOLIA.</p>';
+        return;
+      }
+      $('orders-list').innerHTML = orders.map(o => {
+        const isShipped = o.status === 'SHIPPED';
+        const tagClass = isShipped ? 'shipped' : 'pending';
+        const tagLabel = isShipped ? 'Expédiée' : 'En attente du batch Spot';
+        return `<div class="order-item" style="border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:1.2rem; margin-bottom:1rem; background:rgba(255,255,255,0.02);">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
+            <strong>Commande $${esc(o.order_id)}</strong>
+            <span class="tag $${tagClass}">$${tagLabel}</span>
+          </div>
+          <p style="margin:0.4rem 0; font-size:0.88rem; color:#a5a5b5;">Enregistrée le : $${esc(o.created_at || '-')}</p>
+          <p style="margin:0.4rem 0;">$${esc(o.product_summary || '-')} $${o.total_eur !== undefined ? '— <strong>'+eur(o.total_eur)+'</strong>' : ''}</p>
+          $${o.tracking_number ? '<p style="margin:0.3rem 0; font-size:0.85rem; color:#7EDCC5;">📦 Colis expédié : <strong>'+esc(o.tracking_number)+'</strong> (Carton '+esc(o.box_size || 'M')+')</p>' : ''}
+          $${o.pdf_url ? '<p style="margin-top:0.6rem;"><a href="'+esc(o.pdf_url)+'" target="_blank" rel="noopener" style="color:#FFB4C8; text-decoration:underline; font-weight:600;">📄 Télécharger la facture PDF</a></p>' : ''}
+        </div>`;
+      }).join('');
+    } catch (_) {
+      $('orders-list').innerHTML = '<p class="status">Erreur de connexion lors du chargement des commandes.</p>';
+    }
+  }
+
+  loadUserOrders();
 
   window.goToCart = function (event) {
     event.preventDefault();
@@ -1594,6 +1643,10 @@ class ShopHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
+        # Support CORS pour le développement front-end
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Amz-Date, X-Api-Key, X-Amz-Security-Token")
         self.end_headers()
         self.wfile.write(data)
 
@@ -1602,22 +1655,61 @@ class ShopHandler(BaseHTTPRequestHandler):
         raw = self.rfile.read(length).decode("utf-8") if length > 0 else ""
         return json.loads(raw) if raw.strip() else {}
 
+    def do_OPTIONS(self):
+        """Pre-flight CORS pour les requêtes modernes du front-end."""
+        self.send_response(200)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Amz-Date, X-Api-Key, X-Amz-Security-Token")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def _invoke_lambda(self, payload):
+        """Appelle la Lambda de backend centralisée et décode la réponse."""
+        lambda_client = boto3.client("lambda", region_name=REGION)
+        try:
+            result = lambda_client.invoke(
+                FunctionName=LAMBDA_NAME,
+                InvocationType="RequestResponse",
+                Payload=json.dumps(payload, cls=DecimalEncoder).encode("utf-8"),
+            )
+            if result.get("FunctionError"):
+                err_detail = result["Payload"].read().decode("utf-8", errors="replace")
+                return 502, {"error": "Échec de la fonction Lambda backend.", "detail": err_detail}
+
+            response_raw = result["Payload"].read().decode("utf-8", errors="replace")
+            res_obj = json.loads(response_raw)
+
+            # Support si la Lambda retourne une réponse au format HTTP Proxy
+            if isinstance(res_obj, dict) and "statusCode" in res_obj and "body" in res_obj:
+                body_parsed = json.loads(res_obj["body"]) if isinstance(res_obj["body"], str) else res_obj["body"]
+                return int(res_obj["statusCode"]), body_parsed
+
+            code = 200
+            if isinstance(res_obj, dict):
+                if res_obj.get("statusCode"):
+                    code = int(res_obj["statusCode"])
+                elif res_obj.get("status") == "ERROR" or res_obj.get("error"):
+                    code = 400
+
+            return code, res_obj
+        except Exception as exc:
+            return 500, {"error": f"Erreur lors de l'appel Lambda : {str(exc)}"}
+
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
+        query = urllib.parse.parse_qs(parsed.query)
 
         try:
+            # 1. Pages statiques NÉOLIA & fichiers CSS/JS
             if path in PAGES:
                 content_type, content = PAGES[path]
                 data = content.encode("utf-8")
-
                 self.send_response(200)
                 self.send_header("Content-Type", content_type)
                 self.send_header("Content-Length", str(len(data)))
-                self.send_header(
-                    "Cache-Control",
-                    "no-store, no-cache, must-revalidate, max-age=0",
-                )
+                self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
                 self.send_header("Pragma", "no-cache")
                 self.send_header("Expires", "0")
                 self.end_headers()
@@ -1625,48 +1717,12 @@ class ShopHandler(BaseHTTPRequestHandler):
                 return
 
             if path == "/health":
-                self._send_json(200, {
-                    "status": "healthy",
-                    "instance": INSTANCE_ID,
-                })
+                self._send_json(200, {"status": "healthy", "instance": INSTANCE_ID})
                 return
 
-            if path == "/api/products":
-                ddb = boto3.resource("dynamodb", region_name=REGION)
-                items = ddb.Table(PRODUCTS_TABLE).scan().get("Items", [])
-
-                for product in items:
-                    product["category"] = str(
-                        product.get("category")
-                        or product.get("categorie")
-                        or ""
-                    ).lower()
-
-                items.sort(key=lambda item: item.get("product_id", ""))
-                self._send_json(200, items)
-                return
-
-            if path == "/api/orders":
-                ddb = boto3.resource("dynamodb", region_name=REGION)
-                orders = ddb.Table(ORDERS_TABLE).scan().get("Items", [])
-                orders.sort(
-                    key=lambda item: item.get("created_at", ""),
-                    reverse=True,
-                )
-
-                for order in orders:
-                    if order.get("invoice_s3_key"):
-                        order["pdf_url"] = (
-                            "/api/invoice?key="
-                            + urllib.parse.quote(order["invoice_s3_key"])
-                        )
-
-                self._send_json(200, orders)
-                return
-
+            # 2. Facture PDF officielle (streaming S3)
             if path == "/api/invoice":
-                key = urllib.parse.parse_qs(parsed.query).get("key", [""])[0]
-
+                key = query.get("key", [""])[0]
                 if not key:
                     self._send_json(400, {"error": "Clé de facture manquante."})
                     return
@@ -1677,223 +1733,223 @@ class ShopHandler(BaseHTTPRequestHandler):
                     endpoint_url=f"https://s3.{REGION}.amazonaws.com",
                     config=Config(signature_version="s3v4"),
                 )
-
                 obj = s3.get_object(Bucket=INVOICES_BUCKET, Key=key)
                 pdf_bytes = obj["Body"].read()
                 filename = key.split("/")[-1]
 
                 self.send_response(200)
                 self.send_header("Content-Type", "application/pdf")
-                self.send_header(
-                    "Content-Disposition",
-                    f'inline; filename="{filename}"',
-                )
+                self.send_header("Content-Disposition", f'inline; filename="{filename}"')
                 self.send_header("Content-Length", str(len(pdf_bytes)))
                 self.send_header("Cache-Control", "no-store")
                 self.end_headers()
                 self.wfile.write(pdf_bytes)
                 return
 
+            # 3. Suivi Worker Spot & SQS
             if path == "/api/spot-status":
                 sqs = boto3.client("sqs", region_name=REGION)
                 ec2 = boto3.client("ec2", region_name=REGION)
-
                 attrs = sqs.get_queue_attributes(
                     QueueUrl=SQS_QUEUE_URL,
-                    AttributeNames=[
-                        "ApproximateNumberOfMessages",
-                        "ApproximateNumberOfMessagesNotVisible",
-                    ],
+                    AttributeNames=["ApproximateNumberOfMessages", "ApproximateNumberOfMessagesNotVisible"],
                 ).get("Attributes", {})
-
-                pending = (
-                    int(attrs.get("ApproximateNumberOfMessages", 0))
-                    + int(attrs.get("ApproximateNumberOfMessagesNotVisible", 0))
-                )
-
+                pending = int(attrs.get("ApproximateNumberOfMessages", 0)) + int(attrs.get("ApproximateNumberOfMessagesNotVisible", 0))
                 result = ec2.describe_instances(
-                    Filters=[
-                        {
-                            "Name": "tag:Role",
-                            "Values": ["spot-batch-worker"],
-                        }
-                    ]
+                    Filters=[{"Name": "tag:Role", "Values": ["spot-batch-worker"]}]
                 )
-
                 instances = [
-                    {
-                        "id": instance["InstanceId"],
-                        "state": instance["State"]["Name"],
-                    }
+                    {"id": instance["InstanceId"], "state": instance["State"]["Name"]}
                     for reservation in result.get("Reservations", [])
                     for instance in reservation.get("Instances", [])
                 ]
-
-                self._send_json(200, {
-                    "sqs_pending": pending,
-                    "spot_instances": instances,
-                })
+                self._send_json(200, {"sqs_pending": pending, "spot_instances": instances})
                 return
 
             if path == "/api/info":
-                self._send_json(200, {
-                    "instance": INSTANCE_ID,
-                    "region": REGION,
-                    "launch_template": SPOT_LT_ID,
-                })
+                self._send_json(200, {"instance": INSTANCE_ID, "region": REGION, "launch_template": SPOT_LT_ID})
                 return
 
-            self._send_json(404, {"error": "Route introuvable."})
+            # 4. Catalogue : Tous les produits (Délégué à la Lambda backend)
+            if path == "/api/products":
+                code, res = self._invoke_lambda({"action": "list_products"})
+                # Rétrocompatibilité : l'ancien front attend directement un tableau JS d'articles
+                if code == 200 and isinstance(res, dict) and "products" in res:
+                    # Si le client a demandé explicitement le format structuré via ?format=full
+                    if query.get("format", [""])[0] == "full":
+                        self._send_json(200, res)
+                    else:
+                        self._send_json(200, res["products"])
+                else:
+                    self._send_json(code, res)
+                return
+
+            # 5. Catalogue : Fiche détaillée d'un produit
+            if path == "/api/product" or re.match(r"^/api/products/[^/]+$", path):
+                product_id = query.get("id", [""])[0] or query.get("product_id", [""])[0]
+                if not product_id and "/" in path:
+                    product_id = path.split("/")[-1]
+                code, res = self._invoke_lambda({"action": "get_product", "product_id": product_id})
+                self._send_json(code, res)
+                return
+
+            # 6. Compte utilisateur : Profil Cognito
+            if path in ["/api/user/profile", "/api/me"]:
+                email = query.get("email", [""])[0]
+                code, res = self._invoke_lambda({
+                    "action": "get_user_profile",
+                    "email": email,
+                    "headers": dict(self.headers),
+                })
+                self._send_json(code, res)
+                return
+
+            # 7. Compte utilisateur : Commandes & statut
+            if path in ["/api/user/orders", "/api/orders"]:
+                email = query.get("email", [""])[0] or query.get("customer_email", [""])[0]
+                code, res = self._invoke_lambda({
+                    "action": "get_user_orders",
+                    "customer_email": email,
+                })
+                # Rétrocompatibilité avec l'ancien front admin
+                if code == 200 and isinstance(res, dict) and "orders" in res and not email:
+                    self._send_json(200, res["orders"])
+                else:
+                    self._send_json(code, res)
+                return
+
+            # 8. Détail d'une commande spécifique
+            if path == "/api/order" or re.match(r"^/api/orders/[^/]+$", path):
+                order_id = query.get("order_id", [""])[0] or query.get("id", [""])[0]
+                if not order_id and "/" in path:
+                    order_id = path.split("/")[-1]
+                code, res = self._invoke_lambda({"action": "get_order_details", "order_id": order_id})
+                self._send_json(code, res)
+                return
+
+            # 9. Admin : Vérification des privilèges
+            if path == "/api/admin/check":
+                email = query.get("email", [""])[0]
+                code, res = self._invoke_lambda({
+                    "action": "admin_check",
+                    "email": email,
+                    "headers": dict(self.headers),
+                })
+                self._send_json(code, res)
+                return
+
+            # 10. Admin : Vision des stocks & métriques
+            if path == "/api/admin/stocks":
+                code, res = self._invoke_lambda({"action": "admin_list_stocks"})
+                self._send_json(code, res)
+                return
+
+            # 11. Admin : Liste des membres du groupe admin
+            if path == "/api/admin/admins":
+                code, res = self._invoke_lambda({"action": "admin_list_admins"})
+                self._send_json(code, res)
+                return
+
+            # 12. Admin : Liste de tous les utilisateurs Cognito
+            if path == "/api/admin/users":
+                code, res = self._invoke_lambda({"action": "admin_list_users"})
+                self._send_json(code, res)
+                return
+
+            self._send_json(404, {"error": "Route GET introuvable."})
 
         except Exception as exc:
             self._send_json(500, {"error": str(exc)})
 
     def do_POST(self):
-        path = urllib.parse.urlparse(self.path).path
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
+        query = urllib.parse.parse_qs(parsed.query)
 
         try:
             body = self._read_json()
 
-            if path == "/api/order":
-                customer_name = str(
-                    body.get("customer_name", "")
-                ).strip()[:80]
-                customer_email = str(
-                    body.get("customer_email", "")
-                ).strip()[:120]
-
-                # Accepte le format NÉOLIA (liste items) et le format
-                # précédent (un seul product_id / qty).
+            # 1. Validation de commande (multi-articles ou unitaire)
+            if path in ["/api/order", "/api/orders"]:
+                customer_name = str(body.get("customer_name", "")).strip()[:80]
+                customer_email = str(body.get("customer_email", "")).strip()[:120]
                 items = body.get("items")
 
                 if not items and body.get("product_id"):
-                    items = [{
-                        "product_id": body.get("product_id"),
-                        "qty": body.get("qty", 1),
-                    }]
+                    items = [{"product_id": body.get("product_id"), "qty": body.get("qty", 1)}]
 
-                if (
-                    not customer_name
-                    or not re.match(r"^\S+@\S+\.\S+$", customer_email)
-                    or not isinstance(items, list)
-                    or not items
-                ):
-                    self._send_json(400, {
-                        "error": "Nom, e-mail et au moins un article sont requis."
-                    })
+                if not customer_name or not re.match(r"^\S+@\S+\.\S+$", customer_email) or not isinstance(items, list) or not items:
+                    self._send_json(400, {"error": "Nom, e-mail et au moins un article sont requis."})
                     return
 
-                lambda_client = boto3.client("lambda", region_name=REGION)
-                order_ids = []
-
-                for item in items:
-                    product_id = str(item.get("product_id", "")).strip()
-                    try:
-                        quantity = int(item.get("qty", 0))
-                    except (TypeError, ValueError):
-                        quantity = 0
-
-                    if not product_id or quantity < 1:
-                        self._send_json(400, {
-                            "error": "Article ou quantité invalide."
-                        })
-                        return
-
-                    payload = {
-                        "product_id": product_id,
-                        "qty": quantity,
-                        "customer_name": customer_name,
-                        "customer_email": customer_email,
-                    }
-
-                    result = lambda_client.invoke(
-                        FunctionName=LAMBDA_NAME,
-                        InvocationType="RequestResponse",
-                        Payload=json.dumps(payload).encode("utf-8"),
-                    )
-
-                    if result.get("FunctionError"):
-                        message = result["Payload"].read().decode("utf-8")
-                        self._send_json(502, {
-                            "error": "La fonction de commande a échoué.",
-                            "detail": message,
-                        })
-                        return
-
-                    response_text = result["Payload"].read().decode("utf-8")
-
-                    try:
-                        order_result = json.loads(response_text)
-                    except json.JSONDecodeError:
-                        self._send_json(502, {
-                            "error": "Réponse invalide du service de commande."
-                        })
-                        return
-
-                    if order_result.get("error"):
-                        self._send_json(400, {
-                            "error": order_result["error"]
-                        })
-                        return
-
-                    order_id = order_result.get("order_id")
-                    if order_id is not None:
-                        order_ids.append(str(order_id))
-
-                self._send_json(200, {
-                    "status": "ok",
-                    "order_ids": order_ids,
+                code, res = self._invoke_lambda({
+                    "action": "create_order",
+                    "customer_name": customer_name,
+                    "customer_email": customer_email,
+                    "shipping_address": body.get("shipping_address", "12 Rue de la Paix, 75002 Paris"),
+                    "items": items,
                 })
+
+                # Rétrocompatibilité avec l'ancien front qui attend { status: 'ok', order_ids: [...] }
+                if code == 200 and isinstance(res, dict):
+                    order_id = res.get("order_id")
+                    res["status"] = "ok"
+                    res["order_ids"] = [str(order_id)] if order_id else []
+
+                self._send_json(code, res)
                 return
 
+            # 2. Inscription Cognito avec Nom, Prénom, adresse_postale et e-mail
+            if path in ["/api/auth/register", "/api/auth/signup"]:
+                code, res = self._invoke_lambda({
+                    "action": "register_user",
+                    **body,
+                })
+                self._send_json(code, res)
+                return
+
+            # 3. Confirmation du compte par code
+            if path in ["/api/auth/confirm", "/api/auth/verify"]:
+                code, res = self._invoke_lambda({
+                    "action": "confirm_user",
+                    **body,
+                })
+                self._send_json(code, res)
+                return
+
+            # 4. Abonnement SNS direct (conservé pour rétrocompatibilité)
             if path == "/api/subscribe":
                 email = str(body.get("email", "")).strip()
-
                 if not re.match(r"^\S+@\S+\.\S+$", email):
                     self._send_json(400, {"error": "Adresse e-mail invalide."})
                     return
-
                 sns = boto3.client("sns", region_name=REGION)
                 subscription = sns.subscribe(
                     TopicArn=SNS_CONFIRM_ARN,
                     Protocol="email",
                     Endpoint=email,
-                    Attributes={
-                        "FilterPolicy": json.dumps({
-                            "customer_email": [email]
-                        })
-                    },
+                    Attributes={"FilterPolicy": json.dumps({"customer_email": [email]})},
                 )
-
                 self._send_json(200, {
                     "status": "SUBSCRIBED",
                     "subscription_arn": subscription.get("SubscriptionArn"),
                 })
                 return
 
+            # 5. Démarrage Worker Spot manuel
             if path == "/api/launch-spot":
                 ec2 = boto3.client("ec2", region_name=REGION)
                 instance_id = None
                 mode = "EC2 Spot"
-
                 for instance_type in ("t3.micro", "t3.small"):
                     try:
                         response = ec2.run_instances(
-                            LaunchTemplate={
-                                "LaunchTemplateId": SPOT_LT_ID,
-                                "Version": "$Latest",
-                            },
+                            LaunchTemplate={"LaunchTemplateId": SPOT_LT_ID, "Version": "$Latest"},
                             InstanceType=instance_type,
-                            InstanceMarketOptions={
-                                "MarketType": "spot",
-                                "SpotOptions": {
-                                    "SpotInstanceType": "one-time"
-                                },
-                            },
+                            InstanceMarketOptions={"MarketType": "spot", "SpotOptions": {"SpotInstanceType": "one-time"}},
                             MinCount=1,
                             MaxCount=1,
                         )
-
                         instance_id = response["Instances"][0]["InstanceId"]
                         mode = f"EC2 Spot ({instance_type})"
                         break
@@ -1902,32 +1958,112 @@ class ShopHandler(BaseHTTPRequestHandler):
 
                 if not instance_id:
                     response = ec2.run_instances(
-                        LaunchTemplate={
-                            "LaunchTemplateId": SPOT_LT_ID,
-                            "Version": "$Latest",
-                        },
+                        LaunchTemplate={"LaunchTemplateId": SPOT_LT_ID, "Version": "$Latest"},
                         InstanceType="t3.micro",
                         MinCount=1,
                         MaxCount=1,
                     )
-
                     instance_id = response["Instances"][0]["InstanceId"]
                     mode = "EC2 éphémère (repli sans Spot)"
 
-                self._send_json(200, {
-                    "status": "LAUNCHED",
-                    "instance_id": instance_id,
-                    "mode": mode,
-                })
+                self._send_json(200, {"status": "LAUNCHED", "instance_id": instance_id, "mode": mode})
                 return
 
-            self._send_json(404, {"error": "Route introuvable."})
+            # 6. Compte utilisateur : Modification des infos
+            if path in ["/api/user/profile", "/api/user/update"]:
+                code, res = self._invoke_lambda({
+                    "action": "update_user_profile",
+                    "headers": dict(self.headers),
+                    **body,
+                })
+                self._send_json(code, res)
+                return
+
+            # 7. Admin : Ajustement des stocks
+            if path in ["/api/admin/stock", "/api/admin/stocks"]:
+                code, res = self._invoke_lambda({
+                    "action": "admin_update_stock",
+                    **body,
+                })
+                self._send_json(code, res)
+                return
+
+            # 8. Admin : Ajouter un administrateur
+            if path in ["/api/admin/admins", "/api/admin/admins/add"]:
+                code, res = self._invoke_lambda({
+                    "action": "admin_add_admin",
+                    **body,
+                })
+                self._send_json(code, res)
+                return
+
+            # 9. Admin : Retirer un administrateur (via POST)
+            if path in ["/api/admin/admins/remove", "/api/admin/admins/delete"]:
+                code, res = self._invoke_lambda({
+                    "action": "admin_remove_admin",
+                    **body,
+                })
+                self._send_json(code, res)
+                return
+
+            self._send_json(404, {"error": "Route POST introuvable."})
 
         except Exception as exc:
             self._send_json(500, {"error": str(exc)})
 
+    def do_PUT(self):
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
+
+        try:
+            body = self._read_json()
+
+            # 1. Compte utilisateur : Modification des infos
+            if path in ["/api/user/profile", "/api/user/update"]:
+                code, res = self._invoke_lambda({
+                    "action": "update_user_profile",
+                    "headers": dict(self.headers),
+                    **body,
+                })
+                self._send_json(code, res)
+                return
+
+            # 2. Admin : Mise à jour du stock
+            if path in ["/api/admin/stock", "/api/admin/stocks"]:
+                code, res = self._invoke_lambda({
+                    "action": "admin_update_stock",
+                    **body,
+                })
+                self._send_json(code, res)
+                return
+
+            self._send_json(404, {"error": "Route PUT introuvable."})
+        except Exception as exc:
+            self._send_json(500, {"error": str(exc)})
+
+    def do_DELETE(self):
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
+        query = urllib.parse.parse_qs(parsed.query)
+
+        try:
+            body = self._read_json()
+            username = body.get("username") or body.get("email") or query.get("username", [""])[0] or query.get("email", [""])[0]
+
+            # 1. Admin : Retirer un membre du groupe admin
+            if path == "/api/admin/admins":
+                code, res = self._invoke_lambda({
+                    "action": "admin_remove_admin",
+                    "username": username,
+                })
+                self._send_json(code, res)
+                return
+
+            self._send_json(404, {"error": "Route DELETE introuvable."})
+        except Exception as exc:
+            self._send_json(500, {"error": str(exc)})
+
     def log_message(self, fmt, *args):
-        # Conserve des logs HTTP standards dans la sortie du service.
         super().log_message(fmt, *args)
 
 

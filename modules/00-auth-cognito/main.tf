@@ -1,7 +1,6 @@
 resource "aws_cognito_user_pool" "pool" {
-  name                     = "${var.project_name}-user-pool"
-  username_attributes      = ["email"]
-  auto_verified_attributes = ["email"]
+  name                = "${var.project_name}-user-pool"
+  username_attributes = ["email"]
 
   password_policy {
     minimum_length    = 8
@@ -11,22 +10,61 @@ resource "aws_cognito_user_pool" "pool" {
     require_uppercase = true
   }
 
-  verification_message_template {
-    default_email_option  = "CONFIRM_WITH_LINK"
-    email_subject         = "Activation de votre compte CloudShop"
-    email_message_by_link = "Merci de vous être inscrit sur CloudShop ! Veuillez cliquer sur le lien suivant pour confirmer votre compte : {##Cliquer ici##}"
-  }
-
   schema {
     attribute_data_type = "String"
     name                = "email"
     required            = true
     mutable             = true
   }
+
+  schema {
+    attribute_data_type = "String"
+    name                = "name"
+    required            = false
+    mutable             = true
+  }
+
+  schema {
+    attribute_data_type = "String"
+    name                = "given_name"
+    required            = false
+    mutable             = true
+  }
+
+  schema {
+    attribute_data_type = "String"
+    name                = "family_name"
+    required            = false
+    mutable             = true
+  }
+
+  schema {
+    attribute_data_type = "String"
+    name                = "address"
+    required            = false
+    mutable             = true
+  }
+
+  schema {
+    attribute_data_type = "String"
+    name                = "phone_number"
+    required            = false
+    mutable             = true
+  }
 }
 
 # ------------------------------------------------------------------------------
-# DOMAINE COGNITO (REQUIS POUR LA VALIDATION PAR LIEN EMAIL)
+# GROUPE UTILISATEUR ADMIN COGNITO
+# ------------------------------------------------------------------------------
+resource "aws_cognito_user_group" "admin" {
+  name         = "admin"
+  user_pool_id = aws_cognito_user_pool.pool.id
+  description  = "Groupe administrateurs CloudShop"
+  precedence   = 1
+}
+
+# ------------------------------------------------------------------------------
+# DOMAINE COGNITO
 # ------------------------------------------------------------------------------
 resource "aws_cognito_user_pool_domain" "main" {
   domain       = "${var.project_name}-auth-fisa2026"

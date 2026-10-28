@@ -1,5 +1,5 @@
 # ==============================================================================
-# MODULE 03 : FONCTION AWS LAMBDA (PRISE DE COMMANDE SERVERLESS)
+# MODULE 03 : FONCTION AWS LAMBDA (BACKEND API & PRISE DE COMMANDE SERVERLESS)
 # ==============================================================================
 
 resource "aws_iam_role" "lambda_role" {
@@ -15,7 +15,7 @@ resource "aws_iam_role" "lambda_role" {
   })
 }
 
-# Permissions au moindre privilège : DynamoDB (Products & Orders), SNS et SQS
+# Permissions IAM : DynamoDB (Products & Orders), SNS, SQS et Cognito
 resource "aws_iam_role_policy" "lambda_permissions" {
   name = "${var.project_name}-create-order-lambda-policy"
   role = aws_iam_role.lambda_role.id
@@ -30,18 +30,47 @@ resource "aws_iam_role_policy" "lambda_permissions" {
       },
       {
         Effect   = "Allow"
-        Action   = ["dynamodb:GetItem", "dynamodb:UpdateItem", "dynamodb:PutItem"]
-        Resource = [var.products_table_arn, var.orders_table_arn]
+        Action   = [
+          "dynamodb:GetItem",
+          "dynamodb:UpdateItem",
+          "dynamodb:PutItem",
+          "dynamodb:Scan",
+          "dynamodb:Query"
+        ]
+        Resource = [
+          var.products_table_arn,
+          var.orders_table_arn,
+          "${var.orders_table_arn}/*"
+        ]
       },
       {
         Effect   = "Allow"
-        Action   = ["sns:Publish"]
-        Resource = var.order_confirmation_topic_arn
+        Action   = ["sns:Publish", "sns:Subscribe"]
+        Resource = "*"
       },
       {
         Effect   = "Allow"
         Action   = ["sqs:SendMessage"]
         Resource = var.orders_batch_queue_arn
+      },
+      {
+        Effect   = "Allow"
+        Action   = [
+          "cognito-idp:AdminAddUserToGroup",
+          "cognito-idp:AdminRemoveUserFromGroup",
+          "cognito-idp:AdminListGroupsForUser",
+          "cognito-idp:ListUsersInGroup",
+          "cognito-idp:ListUsers",
+          "cognito-idp:AdminGetUser",
+          "cognito-idp:AdminUpdateUserAttributes",
+          "cognito-idp:AdminCreateUser",
+          "cognito-idp:AdminConfirmSignUp",
+          "cognito-idp:AdminSetUserPassword",
+          "cognito-idp:SignUp",
+          "cognito-idp:ConfirmSignUp",
+          "cognito-idp:GetUser"
+        ]
+        Resource = "*"
       }
     ]
   })
@@ -65,11 +94,14 @@ resource "aws_lambda_function" "create_order" {
 
   environment {
     variables = {
-      AWS_REGION_TARGET = var.aws_region
-      PRODUCTS_TABLE    = var.products_table_name
-      ORDERS_TABLE      = var.orders_table_name
-      SNS_CONFIRM_ARN   = var.order_confirmation_topic_arn
-      SQS_BATCH_URL     = var.orders_batch_queue_url
+      AWS_REGION_TARGET   = var.aws_region
+      PRODUCTS_TABLE      = var.products_table_name
+      ORDERS_TABLE        = var.orders_table_name
+      SNS_CONFIRM_ARN     = var.order_confirmation_topic_arn
+      SQS_BATCH_URL       = var.orders_batch_queue_url
+      USER_POOL_ID        = var.user_pool_id
+      USER_POOL_CLIENT_ID = var.user_pool_client_id
+      ADMIN_GROUP_NAME    = "admin"
     }
   }
 }

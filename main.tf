@@ -131,6 +131,9 @@ module "serverless_lambda" {
   order_confirmation_topic_arn = module.messaging_sns_sqs.order_confirmation_topic_arn
   orders_batch_queue_url       = module.messaging_sns_sqs.orders_batch_queue_url
   orders_batch_queue_arn       = module.messaging_sns_sqs.orders_batch_queue_arn
+  user_pool_id                 = module.auth_cognito.user_pool_id
+  user_pool_client_id          = module.auth_cognito.user_pool_client_id
+  user_pool_arn                = module.auth_cognito.user_pool_arn
 }
 
 # 4. Serveur Web Front-End EC2 (+ option ALB & Auto Scaling Group)
