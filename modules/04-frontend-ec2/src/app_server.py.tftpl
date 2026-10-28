@@ -1,12 +1,20 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+# NÉOLIA - Front-end AWS
+# Template destiné à Terraform templatefile().
+# Les expressions JavaScript $${...} sont volontairement échappées
+# pour que Terraform produise correctement les interpolations JavaScript.
+
 import json
+import re
 import urllib.parse
 import urllib.request
 from decimal import Decimal
 from http.server import HTTPServer, BaseHTTPRequestHandler
+
 import boto3
 from botocore.config import Config
+
 
 USER_POOL_ID = "${user_pool_id}"
 USER_POOL_CLIENT_ID = "${user_pool_client_id}"
@@ -37,673 +45,1302 @@ def get_instance_info():
         )
         token = urllib.request.urlopen(req, timeout=1).read().decode()
 
-        req_id = urllib.request.Request(
-            "http://169.254.169.254/latest/meta-data/instance-id",
-            headers={"X-aws-ec2-metadata-token": token},
-        )
-        inst_id = urllib.request.urlopen(req_id, timeout=1).read().decode()
+        headers = {"X-aws-ec2-metadata-token": token}
+        values = []
 
-        req_az = urllib.request.Request(
-            "http://169.254.169.254/latest/meta-data/placement/availability-zone",
-            headers={"X-aws-ec2-metadata-token": token},
-        )
-        az = urllib.request.urlopen(req_az, timeout=1).read().decode()
+        for path in (
+            "instance-id",
+            "placement/availability-zone",
+        ):
+            req = urllib.request.Request(
+                "http://169.254.169.254/latest/meta-data/" + path,
+                headers=headers,
+            )
+            values.append(
+                urllib.request.urlopen(req, timeout=1).read().decode()
+            )
 
-        return f"{inst_id} ({az})"
+        return f"{values[0]} ({values[1]})"
     except Exception:
         return "ec2-front-local"
 
 
 INSTANCE_ID = get_instance_info()
 
-HTML_PAGE = """<!DOCTYPE html>
+CONFIG_JS = (
+    "window.APP_CONFIG={auth:true,spot:true,userPoolId:%s,"
+    "userPoolClientId:%s,region:%s};"
+    % (
+        json.dumps(USER_POOL_ID),
+        json.dumps(USER_POOL_CLIENT_ID),
+        json.dumps(REGION),
+    )
+)
+
+
+# ----------------------------------------------------------------------
+# BOUTIQUE NÉOLIA
+# ----------------------------------------------------------------------
+
+SHOP_HTML = r"""<!DOCTYPE html>
 <html lang="fr">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ATELIER NOIR — Soins masculins d’exception</title>
-  <style>
-    :root {
-      --ink: #171815;
-      --ink-soft: #292a25;
-      --ivory: #f5f2eb;
-      --paper: #fffdf8;
-      --bronze: #b49a70;
-      --muted: #77766f;
-      --line: #ded9ce;
-      --green: #32745b;
-      --red: #b7483f;
-    }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    html { scroll-behavior: smooth; }
-    body {
-      font-family: Inter, "Helvetica Neue", Arial, sans-serif;
-      background: var(--ivory); color: var(--ink);
-      padding-bottom: 3rem; line-height: 1.55;
-    }
-    header {
-      background: var(--ink); color: var(--paper);
-      padding: 1.2rem 2rem 3.5rem; border-bottom: 1px solid #393a33;
-    }
-    .wrap, .container { max-width: 1180px; margin-left: auto; margin-right: auto; }
-    .brandbar { display:flex; align-items:center; justify-content:space-between; gap:1.5rem; padding-bottom:1.1rem; border-bottom:1px solid #414139; }
-    .brand { font-family: Georgia, "Times New Roman", serif; font-size:1.45rem; letter-spacing:.16em; font-weight:normal; color:var(--paper); }
-    .brand-note { font-size:.68rem; letter-spacing:.2em; color:#c5b99f; text-transform:uppercase; margin-top:.15rem; }
-    .navlinks { display:flex; gap:1.35rem; flex-wrap:wrap; }
-    .navlinks a { color:#e7e1d6; text-decoration:none; text-transform:uppercase; letter-spacing:.1em; font-size:.72rem; }
-    .navlinks a:hover { color:var(--bronze); }
-    .hero { display:grid; grid-template-columns:1.05fr .95fr; align-items:center; gap:3rem; padding:4.2rem 0 1rem; }
-    .eyebrow { color:var(--bronze); text-transform:uppercase; letter-spacing:.22em; font-size:.72rem; font-weight:700; margin-bottom:1rem; }
-    .hero h1 { font-family:Georgia, "Times New Roman", serif; font-weight:normal; font-size:clamp(2.5rem, 5vw, 4.8rem); line-height:1.03; letter-spacing:-.035em; max-width:650px; }
-    .hero-copy { color:#c9c5bb; max-width:460px; margin:1.3rem 0 1.6rem; font-size:1rem; }
-    .hero-cta { display:inline-block; padding:.9rem 1.3rem; background:var(--ivory); color:var(--ink); text-decoration:none; text-transform:uppercase; letter-spacing:.12em; font-size:.72rem; font-weight:700; }
-    .hero-cta:hover { background:var(--bronze); }
-    .hero-art { min-height:310px; background:linear-gradient(135deg,#34352f,#191a17 65%,#65543e); display:flex; flex-direction:column; justify-content:flex-end; padding:2rem; border:1px solid #4b493f; position:relative; overflow:hidden; }
-    .hero-art:before { content:""; position:absolute; width:230px; height:330px; right:16%; top:8%; border-radius:45% 45% 12% 12%; background:linear-gradient(90deg,#1d1e1a,#77705e 48%,#272821); transform:rotate(8deg); box-shadow:0 15px 45px #0008; }
-    .hero-art:after { content:""; position:absolute; width:115px; height:38px; right:calc(16% + 58px); top:4%; background:#b9a47e; transform:rotate(8deg); }
-    .hero-art-label { position:relative; z-index:1; color:#e5dccb; text-transform:uppercase; letter-spacing:.2em; font-size:.68rem; }
-    .container { padding:0 1.5rem; margin-top:2rem; }
-    .card { background:var(--paper); border:1px solid var(--line); padding:1.6rem; margin-bottom:1.4rem; box-shadow:0 8px 30px rgba(30,28,22,.025); }
-    .card-spot { border:1px solid #c5b18c; background:#f0ece3; }
-    h2 { font-family:Georgia, "Times New Roman", serif; font-size:1.65rem; font-weight:normal; color:var(--ink); margin-bottom:1rem; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:.7rem; }
-    .section-kicker { color:var(--muted); font-size:.7rem; letter-spacing:.16em; text-transform:uppercase; margin-bottom:.25rem; }
-    .products-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(225px,1fr)); gap:1rem; }
-    .category-tabs { display:flex; flex-wrap:wrap; gap:.55rem; margin:0 0 1.2rem; }
-    .category-tabs a { border:1px solid var(--line); padding:.55rem .8rem; text-decoration:none; color:var(--ink); text-transform:uppercase; letter-spacing:.09em; font-size:.68rem; }
-    .category-tabs a:hover { background:var(--ink); color:var(--paper); }
-    .product-visual { min-height:150px; display:flex; align-items:center; justify-content:center; margin:-1.2rem -1.2rem 1rem; background:radial-gradient(circle at 50% 35%,#5c584e,#242520 72%); overflow:hidden; }
-    .product-visual span { color:#d6c5a4; border:1px solid #9c8b6b; padding:1.1rem .8rem; min-width:76px; text-align:center; font-family:Georgia,serif; letter-spacing:.12em; box-shadow:0 12px 25px #0006; }
-    .cart-row { display:grid; grid-template-columns:1fr auto auto auto; gap:1rem; align-items:center; padding:.9rem 0; border-bottom:1px solid var(--line); }
-    .cart-row small { display:block;color:var(--muted); }
-    .qty-control { display:flex;align-items:center;gap:.5rem; }
-    .qty-control button { padding:.35rem .6rem; }
-    .cart-total { display:flex;justify-content:space-between;border-top:1px solid var(--line);padding-top:1rem;margin-top:1rem;font-size:1.05rem; }
-    .cart-total strong { font-family:Georgia,serif;font-size:1.35rem; }
-    .prod-box { border:1px solid var(--line); background:#fffefa; display:flex; flex-direction:column; justify-content:space-between; padding:1.2rem; min-height:225px; transition:transform .2s,border-color .2s; }
-    .prod-box:hover { transform:translateY(-3px); border-color:var(--bronze); }
-    .prod-title { font-family:Georgia, "Times New Roman", serif; font-size:1.25rem; font-weight:normal; margin-bottom:.55rem; }
-    .prod-meta { font-size:.82rem; color:var(--muted); margin-bottom:1rem; line-height:1.8; }
-    .price { font-size:1.08rem; font-weight:700; color:var(--ink); }
-    input[type="email"], input[type="text"], input[type="password"] { padding:.75rem .85rem; border:1px solid var(--line); background:#fffefa; font-size:.9rem; width:230px; border-radius:0; color:var(--ink); }
-    input:focus { outline:1px solid var(--bronze); border-color:var(--bronze); }
-    button { background:var(--ink); color:var(--paper); border:1px solid var(--ink); font-weight:600; padding:.75rem 1rem; cursor:pointer; font-size:.76rem; letter-spacing:.06em; text-transform:uppercase; transition:background .2s,color .2s; }
-    button:hover { background:var(--bronze); color:#171815; border-color:var(--bronze); }
-    button:disabled { opacity:.5; cursor:not-allowed; }
-    .btn-secondary { background:transparent; color:var(--ink); border:1px solid var(--line); font-size:.72rem; padding:.65rem .85rem; }
-    .btn-secondary:hover { background:var(--ink); color:var(--paper); border-color:var(--ink); }
-    .btn-spot { background:#746044; color:white; border-color:#746044; padding:.8rem 1.1rem; }
-    .btn-spot:hover { background:#4b3c2c; color:white; border-color:#4b3c2c; }
-    table { width:100%; border-collapse:collapse; font-size:.85rem; margin-top:.5rem; background:var(--paper); }
-    th, td { border-bottom:1px solid var(--line); padding:.8rem; text-align:left; }
-    th { background:#eee9df; color:var(--ink); font-size:.7rem; text-transform:uppercase; letter-spacing:.08em; }
-    .tag-pending { background:#f5e8cc; color:#805a20; padding:.25rem .55rem; font-weight:700; font-size:.72rem; }
-    .tag-shipped { background:#dcebe2; color:#286044; padding:.25rem .55rem; font-weight:700; font-size:.72rem; }
-    a.pdf-link { color:#746044; font-weight:700; text-decoration:none; }
-    a.pdf-link:hover { text-decoration:underline; }
-    #toast { display:none; padding:.9rem 1.2rem; margin-bottom:1.2rem; background:#e4eee7; border:1px solid #b5d1bd; color:#23563a; font-weight:600; }
-    code { overflow-wrap:anywhere; }
-    @media (max-width:760px) {
-      header { padding:1rem 1rem 2.3rem; }
-      .brandbar { align-items:flex-start; flex-direction:column; }
-      .navlinks { gap:.8rem; }
-      .hero { grid-template-columns:1fr; gap:1.5rem; padding-top:2.8rem; }
-      .hero-art { min-height:230px; }
-      .hero-art:before { width:160px; height:240px; right:18%; }
-      .hero-art:after { right:calc(18% + 40px); }
-      .container { padding:0 .8rem; margin-top:1rem; }
-      .card { padding:1rem; }
-      .products-grid { grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); }
-      .cart-row { grid-template-columns:1fr auto; gap:.5rem; }
-      table { display:block; overflow-x:auto; white-space:nowrap; }
-    }
-  </style>
-  <script src="https://cdn.jsdelivr.net/npm/amazon-cognito-identity-js@6.3.6/dist/amazon-cognito-identity.min.js"></script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#34265F">
+<title>NÉOLIA — La couleur du soin</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/style.css">
+<script src="/config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/amazon-cognito-identity-js@6.3.6/dist/amazon-cognito-identity.min.js"></script>
 </head>
 <body>
-  <header>
-    <div class="wrap">
-      <div class="brandbar">
-        <div>
-          <div class="brand">ATELIER NOIR</div>
-          <div class="brand-note">Le soin masculin, autrement</div>
-        </div>
-        <nav class="navlinks" aria-label="Navigation principale">
-          <a href="#visage">Visage</a>
-          <a href="#barbe">Barbe</a>
-          <a href="#corps">Corps</a>
-          <a href="#parfums">Parfums</a>
-          <a href="#panier">Panier <span id="cart-count">0</span></a>
-          <a href="#account">Mon compte</a>
-        </nav>
-      </div>
-      <section class="hero">
-        <div>
-          <p class="eyebrow">L'art du soin masculin</p>
-          <h1>Le soin juste.<br>L'élégance sans effort.</h1>
-          <p class="hero-copy">Des essentiels de soin sélectionnés pour les hommes qui privilégient la qualité, la simplicité et le détail.</p>
-          <a class="hero-cta" href="#visage">Découvrir la collection&nbsp; ↘</a>
-        </div>
-        <div class="hero-art" role="img" aria-label="Visuel abstrait de flacon de soin premium">
-          <span class="hero-art-label">Essentiels contemporains · Série 01</span>
-        </div>
-      </section>
-      <p class="meta" style="margin-top:1.5rem;">Serveur EC2 : <strong>""" + INSTANCE_ID + """</strong> &nbsp;·&nbsp; Région : <strong>""" + REGION + """</strong> &nbsp;·&nbsp; Launch Template : <strong>""" + SPOT_LT_ID + """</strong></p>
-    </div>
-  </header>
+<header class="top">
+  <div class="wrap top-inner">
+    <a class="logo" href="/">NÉOLIA<span class="logo-dot">.</span></a>
+    <nav>
+      <a href="#collection">Collection</a>
+      <a href="#account">Mon compte</a>
+      <a href="#panier">Panier (<span id="count">0</span>)</a>
+      <a href="/admin">Administration</a>
+    </nav>
+  </div>
+</header>
 
-  <div class="container">
-    <div id="toast"></div>
-
-    <!-- 1. IDENTIFICATION CLIENT & AUTHENTIFICATION COGNITO -->
-    <div class="card" id="account">
-      <h2><span>Compte client & Authentification (Amazon Cognito)</span></h2>
-      <p style="font-size: 0.88rem; color: var(--muted); margin-bottom: 0.8rem;">
-        S'inscrire créera automatiquement votre compte Cognito et votre abonnement aux notifications SNS.
+<section class="hero">
+  <div class="wrap hero-inner">
+    <div class="hero-copy">
+      <p class="eyebrow">BEAUTÉ · SOIN · PARFUM</p>
+      <h1>La couleur du soin.<br>Le plaisir au quotidien.</h1>
+      <p class="hero-intro">
+        Des essentiels qui font du bien, des couleurs qui donnent envie.
+        Découvrez votre nouvelle routine beauté, du visage aux parfums.
       </p>
-      <div style="display:flex; gap:0.7rem; align-items:center; flex-wrap:wrap; margin-bottom: 0.8rem;">
-        <input type="text" id="customer-name" value="Bastien" placeholder="Votre nom" style="width:160px;">
-        <input type="email" id="cognito-email" placeholder="votre.email@domaine.fr">
-        <input type="password" id="cognito-password" placeholder="Mot de passe" style="width:180px;">
-        <button class="btn-secondary" onclick="registerCognito()">S'inscrire (Cognito + SNS)</button>
-        <button class="btn-secondary" onclick="loginCognito()">Se connecter</button>
-      </div>
-      <p style="font-size:0.86rem; color:var(--muted);" id="cognito-status">Statut : <strong style="color:var(--red)">Non connecté (Achats bloqués)</strong></p>
+      <a class="cta" href="#collection">Explorer la collection <span>↗</span></a>
     </div>
-
-    <!-- Catalogue ATELIER NOIR : pages de catégories -->
-    <section class="card" id="collection">
-      <p class="section-kicker">La collection</p>
-      <h2><span id="category-title">Tous les essentiels</span><button class="btn-secondary" onclick="loadProducts()">Rafraîchir</button></h2>
-      <p id="category-copy" style="color:var(--muted);margin:-.4rem 0 1.3rem;">Des formules essentielles, des textures sensorielles et une routine sans superflu.</p>
-      <div class="category-tabs" aria-label="Catégories">
-        <a href="#visage">Visage</a><a href="#barbe">Barbe</a><a href="#corps">Corps</a><a href="#parfums">Parfums</a><a href="#collection">Tout voir</a>
-      </div>
-      <div id="products-list" class="products-grid">Chargement de la collection...</div>
-    </section>
-
-    <!-- Panier client -->
-    <section class="card" id="panier">
-      <p class="section-kicker">Votre sélection</p><h2>Le panier <span id="cart-subtitle" style="font: .8rem Arial;color:var(--muted);">0 article</span></h2>
-      <div id="cart-items">Votre panier est encore vide.</div>
-      <div class="cart-total"><span>Sous-total estimé</span><strong id="cart-total">0,00 €</strong></div>
-      <p style="color:var(--muted);font-size:.82rem;margin:.7rem 0 1rem;">Les commandes sont confirmées après connexion. Les articles sont envoyés au service de commande AWS existant.</p>
-      <button id="checkout-btn" onclick="checkoutCart()" disabled>Valider la commande</button>
-      <button class="btn-secondary" onclick="clearCart()" style="margin-left:.4rem;">Vider le panier</button>
-    </section>
-
-    <!-- 3. PANNEAU ADMIN : LANCEMENT MANUEL / PERIODIQUE DU WORKER EC2 SPOT -->
-    <div class="card card-spot">
-      <h2>
-        <span>3. Console Administrateur : Worker Batch EC2 Spot (Périodique 02h00 ou Lancement Manuel)</span>
-        <button class="btn-spot" id="btn-launch-spot" onclick="launchSpotWorker(this)">
-          🚀 Créer & Lancer une Instance EC2 Spot maintenant
-        </button>
-      </h2>
-      <p style="font-size: 0.88rem; color: #0c4a6e; margin-bottom: 0.8rem;">
-        Au repos, <strong>0 instance EC2 Spot ne tourne (0,00 €)</strong> : les commandes s'accumulent dans la file SQS au statut <code>PENDING</code>. Le batch se lance soit automatiquement la nuit à <strong>02h00 UTC</strong>, soit à la demande en cliquant sur le bouton bleu ci-dessus.
-      </p>
-      <div id="spot-status-bar" style="font-size:0.92rem; background:white; padding:0.75rem 1rem; border-radius:6px; border:1px solid #bae6fd;">
-        Chargement de l'état de la file SQS et des instances Spot...
-      </div>
-    </div>
-
-    <!-- 4. TABLEAU DE SUIVI DES COMMANDES & FACTURES PDF -->
-    <div class="card" id="orders">
-      <h2>
-        <span>Suivi des commandes, Colisage & Factures PDF (DynamoDB + S3)</span>
-        <button class="btn-secondary" onclick="loadAll()">Actualiser</button>
-      </h2>
-      <table>
-        <thead>
-          <tr>
-            <th>N° Commande</th>
-            <th>Client & E-mail</th>
-            <th>Article commandé</th>
-            <th>Statut</th>
-            <th>Colis Transporteur (EC2 Spot)</th>
-            <th>N° de Suivi (SNS)</th>
-            <th>Facture PDF (Amazon S3)</th>
-          </tr>
-        </thead>
-        <tbody id="orders-body">
-          <tr><td colspan="7">Chargement des commandes...</td></tr>
-        </tbody>
-      </table>
+    <div class="hero-art" aria-label="Illustration de flacons de soin" role="img">
+      <svg viewBox="0 0 320 300" aria-hidden="true">
+        <ellipse cx="160" cy="266" rx="142" ry="14" fill="#271C4E" opacity=".35"/>
+        <g transform="rotate(-8 60 150)">
+          <rect x="20" y="66" width="70" height="178" rx="14" fill="#FFB4C8"/>
+          <rect x="40" y="39" width="30" height="31" rx="5" fill="#FFD166"/>
+          <rect x="29" y="112" width="52" height="65" rx="5" fill="#FFE0E8"/>
+          <text x="55" y="140" text-anchor="middle" fill="#34265F" font-size="8" font-weight="bold">NEOLIA</text>
+          <text x="55" y="154" text-anchor="middle" fill="#34265F" font-size="6">SOIN</text>
+        </g>
+        <g>
+          <rect x="112" y="104" width="89" height="142" rx="13" fill="#FFC857"/>
+          <rect x="139" y="77" width="35" height="29" rx="4" fill="#34265F"/>
+          <rect x="121" y="145" width="71" height="57" rx="5" fill="#FFE7A5"/>
+          <text x="156" y="171" text-anchor="middle" fill="#34265F" font-size="9" font-weight="bold">NÉOLIA</text>
+          <text x="156" y="184" text-anchor="middle" fill="#34265F" font-size="7">ÉQUILIBRE</text>
+        </g>
+        <g transform="rotate(8 255 155)">
+          <rect x="222" y="78" width="64" height="166" rx="28" fill="#7EDCC5"/>
+          <rect x="239" y="49" width="30" height="32" rx="4" fill="#8C78FF"/>
+          <rect x="231" y="132" width="46" height="49" rx="5" fill="#D1F5EA"/>
+          <text x="254" y="153" text-anchor="middle" fill="#34265F" font-size="8" font-weight="bold">NÉOLIA</text>
+          <text x="254" y="165" text-anchor="middle" fill="#34265F" font-size="6">PARFUM</text>
+        </g>
+      </svg>
+      <span class="art-caption">Des essentiels hauts en couleur</span>
     </div>
   </div>
+</section>
 
-  <script>
-    window.APP_CONFIG = {
-      userPoolId: '""" + USER_POOL_ID + """',
-      userPoolClientId: '""" + USER_POOL_CLIENT_ID + """',
-      region: '""" + REGION + """'
-    };
+<main class="wrap main-layout">
+  <section id="collection" class="catalogue">
+    <div class="section-head">
+      <div>
+        <p class="section-kicker">Notre univers</p>
+        <h2>La collection</h2>
+      </div>
+      <span class="collection-note">Le soin, en couleurs.</span>
+    </div>
+    <div class="filters" id="filters" role="group" aria-label="Catégories"></div>
+    <div class="grid" id="grid">Chargement de la collection…</div>
+  </section>
 
-    var userPool = null;
-    if (typeof AmazonCognitoIdentity !== 'undefined') {
-      const poolData = {
-        UserPoolId: window.APP_CONFIG.userPoolId,
-        ClientId: window.APP_CONFIG.userPoolClientId
-      };
-      userPool = new AmazonCognitoIdentity.CognitoUserPool(poolData);
+  <aside class="cart" id="panier">
+    <p class="section-kicker">Votre sélection</p>
+    <h2>Votre panier</h2>
+    <div id="lines"></div>
+    <div class="total"><span>Total estimé</span><strong id="total">0,00 €</strong></div>
+
+    <section id="account" class="account">
+      <label for="a-email">E-mail du compte</label>
+      <input id="a-email" type="email" placeholder="vous@exemple.fr" autocomplete="username">
+      <label for="a-pass">Mot de passe</label>
+      <input id="a-pass" type="password" placeholder="Mot de passe" autocomplete="current-password">
+      <div class="account-actions">
+        <button class="ghost" type="button" id="a-reg">Créer un compte</button>
+        <button class="ghost" type="button" id="a-log">Connexion</button>
+      </div>
+      <p class="status" id="a-status">Connectez-vous pour commander.</p>
+    </section>
+
+    <label for="name">Nom du client</label>
+    <input id="name" type="text" autocomplete="name" placeholder="Votre nom">
+    <p id="err" class="err" role="alert"></p>
+    <div class="cart-actions">
+      <button id="order" type="button" disabled>Commander</button>
+      <button class="ghost" id="clear" type="button">Vider</button>
+    </div>
+    <p class="fine-print">Commande transmise au service AWS existant. Paiement simulé, aucun débit réel.</p>
+  </aside>
+</main>
+
+<footer>
+  <div class="wrap footer-inner">
+    <a class="logo" href="/">NÉOLIA<span class="logo-dot">.</span></a>
+    <span>La beauté en couleurs.</span>
+    <a href="/admin">Espace administration</a>
+  </div>
+</footer>
+
+<div class="toast" id="toast" role="status"></div>
+<div class="thanks" id="thanks" role="dialog" aria-modal="true" aria-labelledby="t-title">
+  <div class="thanks-card">
+    <span class="success-mark">✓</span>
+    <h2 id="t-title">Merci pour votre commande !</h2>
+    <p>Votre commande a été transmise au service de traitement.</p>
+    <p class="ref" id="t-ref"></p>
+    <button id="t-close" type="button">Continuer mes achats</button>
+  </div>
+</div>
+
+<script>
+const CATS = {
+  tous: 'Tout',
+  visage: 'Visage',
+  barbe: 'Barbe',
+  corps: 'Corps',
+  parfums: 'Parfums'
+};
+
+const COLORS = {
+  visage: '#FFB4C8',
+  barbe: '#FFC857',
+  corps: '#9C8CFF',
+  parfums: '#7EDCC5'
+};
+
+const CFG = window.APP_CONFIG || {};
+const $ = id => document.getElementById(id);
+const eur = v => Number(v || 0).toLocaleString('fr-FR', {
+  style: 'currency', currency: 'EUR'
+});
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({
+  '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'
+}[c]));
+
+let products = [];
+let cat = 'tous';
+let cart = {};
+let pool = null;
+let token = sessionStorage.getItem('jwt_token');
+let authEmail = sessionStorage.getItem('user_email');
+
+try {
+  cart = JSON.parse(localStorage.getItem('neolia_cart') || '{}') || {};
+} catch (_) {
+  cart = {};
+}
+
+function notify(message) {
+  $('toast').textContent = message;
+  $('toast').classList.add('visible');
+  window.setTimeout(() => $('toast').classList.remove('visible'), 4500);
+}
+
+function bottle(category) {
+  const color = COLORS[category] || '#FFB4C8';
+  const shape = category === 'parfums'
+    ? `<rect x="30" y="43" width="60" height="91" rx="10" fill="$${color}"/>
+       <rect x="48" y="24" width="24" height="21" rx="3" fill="#34265F"/>
+       <rect x="41" y="15" width="38" height="11" rx="3" fill="#FFD166"/>`
+    : category === 'corps'
+    ? `<path d="M35 135 L38 39 Q60 29 82 39 L85 135 Z" fill="$${color}"/>
+       <rect x="46" y="17" width="28" height="25" rx="4" fill="#34265F"/>`
+    : category === 'barbe'
+    ? `<rect x="35" y="49" width="50" height="86" rx="8" fill="$${color}"/>
+       <rect x="49" y="29" width="22" height="23" rx="3" fill="#34265F"/>
+       <ellipse cx="60" cy="20" rx="10" ry="10" fill="#FFD166"/>`
+    : `<rect x="30" y="43" width="60" height="92" rx="10" fill="$${color}"/>
+       <rect x="49" y="20" width="22" height="25" rx="4" fill="#34265F"/>
+       <rect x="43" y="12" width="34" height="10" rx="3" fill="#FFD166"/>`;
+
+  return `<svg viewBox="0 0 120 150" aria-hidden="true">
+    <ellipse cx="60" cy="140" rx="39" ry="5" fill="#34265F" opacity=".12"/>
+    $${shape}
+    <rect x="36" y="76" width="48" height="28" rx="3" fill="#FFF9F5" opacity=".86"/>
+    <text x="60" y="88" text-anchor="middle" font-size="6" font-weight="bold" fill="#34265F">NÉOLIA</text>
+    <text x="60" y="97" text-anchor="middle" font-size="5" fill="#34265F">ESSENTIEL</text>
+  </svg>`;
+}
+
+function renderFilters() {
+  $('filters').innerHTML = Object.entries(CATS).map(([key, label]) =>
+    `<button type="button" data-c="$${key}" aria-pressed="$${key === cat}">$${label}</button>`
+  ).join('');
+
+  document.querySelectorAll('#filters button').forEach(button => {
+    button.addEventListener('click', () => {
+      cat = button.dataset.c;
+      renderFilters();
+      renderProducts();
+    });
+  });
+}
+
+function renderProducts() {
+  const list = products.filter(p =>
+    cat === 'tous' || String(p.category || p.categorie || '').toLowerCase() === cat
+  );
+
+  $('grid').innerHTML = list.length
+    ? list.map(p => {
+        const category = String(p.category || p.categorie || '').toLowerCase();
+        const available = Number(p.stock || 0) > 0;
+
+        return `<article class="prod">
+          <div class="pic" style="--product-color:$${COLORS[category] || '#FFB4C8'}">
+            $${bottle(category)}
+            <span class="category-tag">$${esc(CATS[category] || 'Collection')}</span>
+          </div>
+          <div class="prod-body">
+            <h3>$${esc(p.name || 'Produit NÉOLIA')}</h3>
+            <p class="desc">$${esc(p.description || 'Un essentiel pour votre routine quotidienne.')}</p>
+            <p class="stock $${available ? 'available' : 'unavailable'}">
+              $${available ? 'En stock' : 'Épuisé'}
+            </p>
+            <div class="product-bottom">
+              <span class="price">$${eur(p.price_eur)}</span>
+              <button type="button" data-id="$${esc(p.product_id)}" $${available ? '' : 'disabled'}>
+                Ajouter
+              </button>
+            </div>
+          </div>
+        </article>`;
+      }).join('')
+    : '<p class="empty">Aucun produit dans cette catégorie.</p>';
+
+  document.querySelectorAll('#grid button[data-id]').forEach(button => {
+    button.addEventListener('click', () => add(button.dataset.id));
+  });
+}
+
+async function loadProducts() {
+  const response = await fetch('/api/products', { cache: 'no-store' });
+  if (!response.ok) throw new Error('Impossible de charger le catalogue.');
+  products = await response.json();
+  renderProducts();
+  renderCart();
+}
+
+function saveCart() {
+  localStorage.setItem('neolia_cart', JSON.stringify(cart));
+  renderCart();
+}
+
+function add(id) {
+  const product = products.find(p => p.product_id === id);
+  if (!product) return;
+
+  const quantity = Number(cart[id] || 0);
+  if (quantity >= Number(product.stock || 0)) {
+    notify('Stock maximal atteint pour ce produit.');
+    return;
+  }
+
+  cart[id] = quantity + 1;
+  saveCart();
+  notify(product.name + ' ajouté au panier.');
+}
+
+function change(id, delta) {
+  const product = products.find(p => p.product_id === id);
+  const quantity = Number(cart[id] || 0) + delta;
+
+  if (quantity <= 0) {
+    delete cart[id];
+  } else if (product && quantity <= Number(product.stock || 0)) {
+    cart[id] = quantity;
+  } else {
+    notify('La quantité demandée dépasse le stock disponible.');
+    return;
+  }
+
+  saveCart();
+}
+
+function renderCart() {
+  const rows = Object.entries(cart).filter(([id, quantity]) =>
+    Number(quantity) > 0 && products.some(p => p.product_id === id)
+  );
+
+  let total = 0;
+  let count = 0;
+
+  $('lines').innerHTML = rows.length
+    ? rows.map(([id, quantity]) => {
+        const p = products.find(x => x.product_id === id);
+        const subtotal = Number(p.price_eur || 0) * Number(quantity);
+        total += subtotal;
+        count += Number(quantity);
+
+        return `<div class="line">
+          <div>
+            <strong>$${esc(p.name)}</strong>
+            <small>$${eur(p.price_eur)} l'unité</small>
+          </div>
+          <div class="qty">
+            <button type="button" class="quantity" data-d="-1" data-id="$${esc(id)}" aria-label="Retirer un">−</button>
+            <span>$${quantity}</span>
+            <button type="button" class="quantity" data-d="1" data-id="$${esc(id)}" aria-label="Ajouter un">+</button>
+          </div>
+          <strong class="subtotal">$${eur(subtotal)}</strong>
+        </div>`;
+      }).join('')
+    : '<p class="empty">Votre panier est vide. Découvrez les essentiels NÉOLIA.</p>';
+
+  document.querySelectorAll('#lines button[data-id]').forEach(button => {
+    button.addEventListener('click', () =>
+      change(button.dataset.id, Number(button.dataset.d))
+    );
+  });
+
+  $('total').textContent = eur(total);
+  $('count').textContent = count;
+  $('order').disabled = rows.length === 0;
+}
+
+$('clear').addEventListener('click', () => {
+  cart = {};
+  saveCart();
+});
+
+function updateAuthUI() {
+  if (token && authEmail) {
+    $('a-status').textContent = 'Connecté : ' + authEmail;
+    $('a-email').value = authEmail;
+    $('a-email').readOnly = true;
+  }
+}
+
+if (CFG.auth && typeof AmazonCognitoIdentity !== 'undefined') {
+  pool = new AmazonCognitoIdentity.CognitoUserPool({
+    UserPoolId: CFG.userPoolId,
+    ClientId: CFG.userPoolClientId
+  });
+
+  updateAuthUI();
+
+  $('a-reg').addEventListener('click', () => {
+    const email = $('a-email').value.trim();
+    const password = $('a-pass').value;
+
+    if (!email || !password) {
+      $('a-status').textContent = 'Saisissez un e-mail et un mot de passe.';
+      return;
     }
 
-    async function registerCognito() {
-      if (!userPool) { alert('Erreur: SDK Cognito non disponible.'); return; }
-      const email = document.getElementById('cognito-email').value.trim();
-      const password = document.getElementById('cognito-password').value;
-      if (!email || !password) { alert('Veuillez saisir un e-mail et un mot de passe.'); return; }
+    const attributes = [
+      new AmazonCognitoIdentity.CognitoUserAttribute({
+        Name: 'email', Value: email
+      })
+    ];
 
-      const attributeList = [
-        new AmazonCognitoIdentity.CognitoUserAttribute({ Name: 'email', Value: email })
-      ];
+    pool.signUp(email, password, attributes, null, async error => {
+      if (error) {
+        $('a-status').textContent = error.message;
+        return;
+      }
 
-      // 1. Inscription Cognito
-      userPool.signUp(email, password, attributeList, null, async (err, result) => {
-        if (err) { alert('Erreur Cognito : ' + err.message); return; }
-
-        // 2. Abonnement automatique SNS dans la foulée
-        try {
-          await fetch('/api/subscribe', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ email })
-          });
-          showToast('✅ Compte créé ! Un e-mail d activation Cognito et une confirmation SNS vous ont été envoyés sur ' + email);
-        } catch (e) {
-          showToast('✅ Compte Cognito créé ! Cliquez sur le lien d activation dans votre boîte mail.');
-        }
-      });
-    }
-
-    function loginCognito() {
-      if (!userPool) { alert('Erreur: SDK Cognito non disponible.'); return; }
-      const email = document.getElementById('cognito-email').value.trim();
-      const password = document.getElementById('cognito-password').value;
-      if (!email || !password) { alert('Veuillez saisir votre e-mail et mot de passe.'); return; }
-
-      const authDetails = new AmazonCognitoIdentity.AuthenticationDetails({ Username: email, Password: password });
-      const cognitoUser = new AmazonCognitoIdentity.CognitoUser({ Username: email, Pool: userPool });
-
-      cognitoUser.authenticateUser(authDetails, {
-        onSuccess: (result) => {
-          const jwtToken = result.getIdToken().getJwtToken();
-          sessionStorage.setItem('jwt_token', jwtToken);
-          sessionStorage.setItem('user_email', email);
-          document.getElementById('cognito-status').innerHTML = 'Statut : <strong style="color:var(--green)">Connecté avec ' + email + ' (Token JWT actif - Achats autorisés)</strong>';
-          showToast('✅ Session Cognito active ! Vous pouvez désormais passer commande.');
-        },
-        onFailure: (err) => { alert('Erreur de connexion : ' + err.message); }
-      });
-    }
-
-    function showToast(msg) {
-      const toast = document.getElementById('toast');
-      toast.style.display = 'block';
-      toast.textContent = msg;
-    }
-
-    async function launchSpotWorker(btn) {
-      btn.disabled = true;
-      const oldText = btn.textContent;
-      btn.textContent = '⏳ Création de l instance EC2 Spot...';
       try {
-        const res = await fetch('/api/launch-spot', {
+        await fetch('/api/subscribe', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: '{}'
+          body: JSON.stringify({email})
         });
-        const data = await res.json();
-        if (data.error) {
-          showToast(`❌ Erreur : $${data.error}`);
-        } else {
-          showToast(`🚀 Instance Worker $${data.instance_id} ($${data.mode}) créée à la demande !`);
+      } catch (_) {}
+
+      $('a-status').textContent =
+        'Compte créé. Vérifiez votre e-mail pour confirmer votre inscription.';
+    });
+  });
+
+  $('a-log').addEventListener('click', () => {
+    const email = $('a-email').value.trim();
+    const password = $('a-pass').value;
+
+    if (!email || !password) {
+      $('a-status').textContent = 'Saisissez un e-mail et un mot de passe.';
+      return;
+    }
+
+    const user = new AmazonCognitoIdentity.CognitoUser({
+      Username: email,
+      Pool: pool
+    });
+
+    user.authenticateUser(
+      new AmazonCognitoIdentity.AuthenticationDetails({
+        Username: email,
+        Password: password
+      }),
+      {
+        onSuccess: result => {
+          token = result.getIdToken().getJwtToken();
+          authEmail = email;
+
+          sessionStorage.setItem('jwt_token', token);
+          sessionStorage.setItem('user_email', email);
+
+          updateAuthUI();
+          $('a-status').textContent = 'Connexion réussie : ' + email;
+          notify('Connexion réussie. Vous pouvez commander.');
+        },
+        onFailure: error => {
+          $('a-status').textContent = error.message;
         }
-        await loadSpotStatus();
-      } finally {
-        btn.disabled = false;
-        btn.textContent = oldText;
       }
+    );
+  });
+}
+
+$('order').addEventListener('click', async () => {
+  $('err').textContent = '';
+
+  const name = $('name').value.trim();
+  const email = authEmail || '';
+
+  if (CFG.auth && !token) {
+    $('err').textContent = 'Connectez-vous à votre compte avant de commander.';
+    $('account').scrollIntoView({behavior: 'smooth'});
+    return;
+  }
+
+  if (!name || !email) {
+    $('err').textContent = 'Indiquez votre nom et connectez-vous avec votre compte client.';
+    return;
+  }
+
+  const items = Object.entries(cart)
+    .filter(([, quantity]) => Number(quantity) > 0)
+    .map(([product_id, qty]) => ({product_id, qty: Number(qty)}));
+
+  if (!items.length) return;
+
+  const button = $('order');
+  button.disabled = true;
+  button.textContent = 'Envoi…';
+
+  try {
+    const response = await fetch('/api/order', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + token
+      },
+      body: JSON.stringify({
+        items,
+        customer_name: name,
+        customer_email: email
+      })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok || data.error) {
+      throw new Error(data.error || 'Commande impossible.');
     }
 
-    async function loadSpotStatus() {
-      const res = await fetch('/api/spot-status');
-      const data = await res.json();
-      const bar = document.getElementById('spot-status-bar');
-      const instancesHtml = data.spot_instances.length
-        ? data.spot_instances.map(i => `<code>$${i.id}</code> (<strong>$${i.state}</strong>)`).join(' · ')
-        : '<strong>Aucune instance active (0,00 €/h au repos)</strong>';
-      bar.innerHTML = `📦 <strong>Commandes en attente dans SQS :</strong> <strong>$${data.sqs_pending}</strong> &nbsp;|&nbsp; 🖥️ <strong>Instances EC2 Spot récentes :</strong> $${instancesHtml}`;
-    }
+    $('t-ref').textContent =
+      'Référence : ' + (data.order_ids || []).join(', ');
 
-    const CATEGORY_INFO = {
-      visage: { title: 'Les soins du visage', copy: 'Nettoyants, sérums et hydratants pour une routine précise et équilibrée.' },
-      barbe: { title: 'Le rituel de la barbe', copy: 'Huiles nourrissantes, baumes disciplinants et soins pour une barbe impeccable.' },
-      corps: { title: 'Les soins du corps', copy: 'Des essentiels quotidiens aux textures sobres et aux parfums subtils.' },
-      parfums: { title: 'Les signatures olfactives', copy: 'Des accords boisés, ambrés et frais pour laisser une empreinte discrète.' },
-      collection: { title: 'Tous les essentiels', copy: 'Découvrez toute la collection ATELIER NOIR.' }
-    };
-    let allProducts = [];
-    let cart = {};
-    try { cart = JSON.parse(localStorage.getItem('atelier_noir_cart') || '{}') || {}; } catch (_) { cart = {}; }
+    $('thanks').classList.add('open');
+    cart = {};
+    saveCart();
+    await loadProducts();
+  } catch (error) {
+    $('err').textContent = error.message;
+  } finally {
+    button.textContent = 'Commander';
+    renderCart();
+  }
+});
 
-    function currentCategory() {
-      const value = (location.hash || '#collection').slice(1).toLowerCase();
-      return CATEGORY_INFO[value] ? value : 'collection';
-    }
-    function money(value) { return Number(value || 0).toLocaleString('fr-FR', {style:'currency',currency:'EUR'}); }
-    function productCategory(p) {
-      const raw = String(p.category || p.categorie || '').toLowerCase();
-      if (['visage','barbe','corps','parfums'].includes(raw)) return raw;
-      return 'autres';
-    }
-    async function loadProducts() {
-      const res = await fetch('/api/products');
-      if (!res.ok) throw new Error('Impossible de charger le catalogue.');
-      allProducts = await res.json();
-      renderProducts();
-    }
-    function renderProducts() {
-      const category = currentCategory();
-      const info = CATEGORY_INFO[category];
-      document.getElementById('category-title').textContent = info.title;
-      document.getElementById('category-copy').textContent = info.copy;
-      const products = allProducts.filter(p => category === 'collection' ? productCategory(p) !== 'autres' : productCategory(p) === category);
-      const container = document.getElementById('products-list');
-      if (!products.length) {
-        container.innerHTML = '<p style="color:var(--muted);padding:1rem 0;">Aucun produit dans cette catégorie. Vérifiez que le catalogue ATELIER NOIR a été chargé dans DynamoDB.</p>';
-        return;
-      }
-      container.innerHTML = products.map(p => `
-        <article class="prod-box">
-          <div>
-            <div class="product-visual"><span>ATELIER<br>NOIR</span></div>
-            <p class="section-kicker">$${productCategory(p)}</p>
-            <div class="prod-title">$${p.name}</div>
-            <div class="prod-meta">$${p.description || 'Un essentiel soigneusement sélectionné pour votre rituel quotidien.'}<br>Réf. <code>$${p.product_id}</code><br>Disponibilité : <strong>$${Number(p.stock || 0) > 0 ? 'En stock' : 'Épuisé'}</strong></div>
-          </div>
-          <div style="display:flex;justify-content:space-between;align-items:center;gap:.6rem;margin-top:.6rem;">
-            <span class="price">$${money(p.price_eur)}</span>
-            <button onclick="addToCart('$${p.product_id}')" $${Number(p.stock || 0) <= 0 ? 'disabled' : ''}>Ajouter au panier</button>
-          </div>
-        </article>`).join('');
-    }
-    function saveCart() { localStorage.setItem('atelier_noir_cart', JSON.stringify(cart)); renderCart(); }
-    function addToCart(id) {
-      const p = allProducts.find(x => x.product_id === id);
-      if (!p) return;
-      const current = Number(cart[id] || 0);
-      if (current >= Number(p.stock || 0)) { showToast('Stock maximal atteint pour ce produit.'); return; }
-      cart[id] = current + 1; saveCart(); showToast(p.name + ' ajouté au panier.');
-    }
-    function changeQty(id, delta) {
-      const p = allProducts.find(x => x.product_id === id);
-      const next = Number(cart[id] || 0) + delta;
-      if (next <= 0) delete cart[id];
-      else if (p && next <= Number(p.stock || 0)) cart[id] = next;
-      else { showToast('La quantité dépasse le stock disponible.'); return; }
-      saveCart();
-    }
-    function removeFromCart(id) { delete cart[id]; saveCart(); }
-    function clearCart() { cart = {}; saveCart(); }
-    function renderCart() {
-      const entries = Object.entries(cart).filter(([id, qty]) => qty > 0 && allProducts.some(p => p.product_id === id));
-      const count = entries.reduce((sum, [,qty]) => sum + Number(qty), 0);
-      const total = entries.reduce((sum, [id,qty]) => { const p = allProducts.find(x => x.product_id === id); return sum + Number(p.price_eur || 0) * Number(qty); }, 0);
-      document.getElementById('cart-count').textContent = count;
-      document.getElementById('cart-subtitle').textContent = count + (count > 1 ? ' articles' : ' article');
-      document.getElementById('cart-total').textContent = money(total);
-      document.getElementById('checkout-btn').disabled = entries.length === 0;
-      const box = document.getElementById('cart-items');
-      if (!entries.length) { box.innerHTML = '<p style="color:var(--muted);padding:.8rem 0;">Votre panier est encore vide. Ajoutez un essentiel depuis la collection.</p>'; return; }
-      box.innerHTML = entries.map(([id,qty]) => {
-        const p = allProducts.find(x => x.product_id === id);
-        return `<div class="cart-row"><div><strong>$${p.name}</strong><small>$${money(p.price_eur)} l’unité</small></div><div class="qty-control"><button class="btn-secondary" onclick="changeQty('$${id}',-1)" aria-label="Diminuer">−</button><strong>$${qty}</strong><button class="btn-secondary" onclick="changeQty('$${id}',1)" aria-label="Augmenter">+</button></div><strong>$${money(Number(p.price_eur)*Number(qty))}</strong><button class="btn-secondary" onclick="removeFromCart('$${id}')">Retirer</button></div>`;
-      }).join('');
-    }
-    async function checkoutCart() {
-      const jwtToken = sessionStorage.getItem('jwt_token');
-      const userEmail = sessionStorage.getItem('user_email');
-      if (!jwtToken || !userEmail) { alert('Connectez-vous avec votre compte client avant de valider votre panier.'); location.hash = '#account'; return; }
-      const btn = document.getElementById('checkout-btn');
-      const entries = Object.entries(cart).filter(([id,qty]) => qty > 0 && allProducts.some(p => p.product_id === id));
-      if (!entries.length) return;
-      btn.disabled = true; btn.textContent = 'Envoi des commandes…';
-      const customerName = document.getElementById('customer-name').value.trim() || 'Client ATELIER NOIR';
-      const completed = [];
-      try {
-        for (const [productId, qty] of entries) {
-          const res = await fetch('/api/order', {
-            method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+jwtToken},
-            body:JSON.stringify({product_id:productId,qty:Number(qty),customer_name:customerName,customer_email:userEmail})
-          });
-          const data = await res.json();
-          if (!res.ok || data.error) throw new Error(data.error || 'Erreur pendant la commande de '+productId);
-          completed.push(productId);
-        }
-        completed.forEach(id => delete cart[id]); saveCart();
-        showToast('Commande transmise au service AWS pour '+completed.length+' ligne(s). Consultez le suivi ci-dessous.');
-        await loadAll(); location.hash = '#orders';
-      } catch (e) {
-        completed.forEach(id => delete cart[id]); saveCart();
-        showToast('Une partie du panier a été envoyée. Vérifiez le suivi des commandes avant de réessayer. Détail : '+e.message);
-        await loadAll();
-      } finally { btn.disabled = false; btn.textContent = 'Valider la commande'; }
-    }
-    window.addEventListener('hashchange', renderProducts);
-    async function loadOrders() {
-      const res = await fetch('/api/orders');
-      const orders = await res.json();
-      const tbody = document.getElementById('orders-body');
-      if (!orders.length) {
-        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#64748b;">Aucune commande pour le moment.</td></tr>';
-        return;
-      }
-      tbody.innerHTML = orders.map(o => `
-        <tr>
-          <td><strong>$${o.order_id}</strong><br><span style="font-size:0.78rem;color:#64748b;">$${o.created_at || ''}</span></td>
-          <td>$${o.customer_name || '-'}<br><small style="color:#64748b;">$${o.customer_email || ''}</small></td>
-          <td>$${o.product_summary || '-'}</td>
-          <td><span class="$${o.status === 'SHIPPED' ? 'tag-shipped' : 'tag-pending'}">$${o.status}</span></td>
-          <td>$${o.carrier_box ? `$${o.carrier_box}<br><small>$${o.box_dimensions || ''} ($${o.fill_rate_percent || 0}% rempli)</small>` : '<em>En attente du lancement Spot...</em>'}</td>
-          <td><code>$${o.tracking_number || 'En attente...'}</code></td>
-          <td>$${o.pdf_url ? `<a class="pdf-link" href="$${o.pdf_url}" target="_blank">📄 Ouvrir la Facture PDF</a>` : '<em>En attente du batch Spot...</em>'}</td>
-        </tr>
-      `).join('');
-    }
+$('t-close').addEventListener('click', () => {
+  $('thanks').classList.remove('open');
+});
 
-    async function orderProduct(productId, btn) {
-      // VERIFICATION OBLIGATOIRE DU TOKEN JWT
-      const jwtToken = sessionStorage.getItem('jwt_token');
-      const userEmail = sessionStorage.getItem('user_email');
-
-      if (!jwtToken || !userEmail) {
-        alert('⛔ Accès refusé : Vous devez créer un compte et vous connecter via Amazon Cognito pour pouvoir passer une commande !');
-        return;
-      }
-
-      btn.disabled = true;
-      const oldText = btn.textContent;
-      btn.textContent = 'Appel Lambda...';
-      try {
-        const customer_name = document.getElementById('customer-name').value.trim() || 'Client CloudShop';
-        const res = await fetch('/api/order', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer ' + jwtToken
-          },
-          body: JSON.stringify({ product_id: productId, qty: 1, customer_name, customer_email: userEmail })
-        });
-        const data = await res.json();
-        showToast(`✅ Commande $${data.order_id} enregistrée pour $${userEmail} !`);
-        await loadAll();
-      } finally {
-        btn.disabled = false;
-        btn.textContent = oldText;
-      }
-    }
-
-    async function loadAll() {
-      await Promise.all([loadProducts(), loadOrders(), loadSpotStatus()]);
-      renderCart();
-    }
-    window.addToCart = addToCart;
-    window.changeQty = changeQty;
-    window.removeFromCart = removeFromCart;
-    window.clearCart = clearCart;
-    window.checkoutCart = checkoutCart;
-    window.loadProducts = loadProducts;
-
-    loadAll().catch(e => showToast('Erreur de chargement : ' + e.message));
-    setInterval(() => { loadOrders(); loadSpotStatus(); }, 5000);
-  </script>
+renderFilters();
+renderCart();
+loadProducts().catch(error => {
+  $('grid').textContent = error.message;
+});
+</script>
 </body>
 </html>
 """
 
 
+# ----------------------------------------------------------------------
+# ADMINISTRATION NÉOLIA
+# ----------------------------------------------------------------------
+
+ADMIN_HTML = r"""<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NÉOLIA — Administration</title>
+<link rel="stylesheet" href="/style.css">
+<script src="/config.js"></script>
+</head>
+<body>
+<header class="top">
+  <div class="wrap top-inner">
+    <a class="logo" href="/">NÉOLIA<span class="logo-dot">.</span> <span class="admin-mark">ADMIN</span></a>
+    <nav><a href="/">Voir la boutique</a></nav>
+  </div>
+</header>
+
+<main class="wrap admin-main">
+  <div class="section-head">
+    <div><p class="section-kicker">Pilotage</p><h1>Tableau de bord</h1></div>
+    <button type="button" class="ghost" id="refresh">Actualiser</button>
+  </div>
+
+  <section class="stats">
+    <article class="stat"><b id="s-total">0</b><span>Commandes</span></article>
+    <article class="stat"><b id="s-pending">0</b><span>À expédier</span></article>
+    <article class="stat"><b id="s-shipped">0</b><span>Expédiées</span></article>
+    <article class="stat" id="revenue-box"><b id="s-revenue">0 €</b><span>Chiffre d'affaires</span></article>
+  </section>
+
+  <section class="panel" id="spot" hidden>
+    <div class="section-head">
+      <div><p class="section-kicker">Infrastructure</p><h2>Traitement par lot EC2 Spot</h2></div>
+      <button id="spot-btn" type="button">Lancer une instance</button>
+    </div>
+    <p id="spot-status">Chargement de l'état de la file…</p>
+    <p id="infra" class="status"></p>
+  </section>
+
+  <section class="panel">
+    <div class="section-head">
+      <div><p class="section-kicker">Suivi des ventes</p><h2>Toutes les commandes</h2></div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>Commande</th><th>Client</th><th>Articles</th>
+          <th>Statut</th><th>Expédition</th><th>Facture</th>
+        </tr></thead>
+        <tbody id="body"><tr><td colspan="6">Chargement…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+const CFG = window.APP_CONFIG || {};
+const $ = id => document.getElementById(id);
+const eur = v => Number(v || 0).toLocaleString('fr-FR', {
+  style:'currency', currency:'EUR'
+});
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({
+  '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'
+}[c]));
+
+function notify(message) {
+  $('toast').textContent = message;
+  $('toast').classList.add('visible');
+  window.setTimeout(() => $('toast').classList.remove('visible'), 4500);
+}
+
+async function load() {
+  const response = await fetch('/api/orders', {cache:'no-store'});
+  if (!response.ok) throw new Error('Impossible de charger les commandes.');
+
+  const orders = await response.json();
+  const shipped = orders.filter(o => o.status === 'SHIPPED').length;
+  const hasTotal = orders.some(o => o.total_eur !== undefined);
+
+  $('s-total').textContent = orders.length;
+  $('s-shipped').textContent = shipped;
+  $('s-pending').textContent = orders.length - shipped;
+  $('revenue-box').hidden = !hasTotal;
+  $('s-revenue').textContent = eur(
+    orders.reduce((sum, o) => sum + Number(o.total_eur || 0), 0)
+  );
+
+  $('body').innerHTML = orders.length
+    ? orders.map(o => `<tr>
+        <td><strong>$${esc(o.order_id)}</strong><br>
+          <small>$${esc((o.created_at || '').replace('T',' ').slice(0,16))}</small></td>
+        <td>$${esc(o.customer_name || '-')}<br>
+          <small>$${esc(o.customer_email || '')}</small></td>
+        <td>$${esc(o.product_summary || '-')}
+          $${o.total_eur !== undefined ? '<br><small>'+eur(o.total_eur)+'</small>' : ''}</td>
+        <td><span class="tag $${o.status === 'SHIPPED' ? 'shipped' : 'pending'}">
+          $${o.status === 'SHIPPED' ? 'Expédiée' : 'En attente'}
+        </span></td>
+        <td>$${o.carrier_box ? esc(o.carrier_box) : 'Traitement en attente'}
+          $${o.tracking_number ? '<br><small>Suivi : '+esc(o.tracking_number)+'</small>' : ''}
+        </td>
+        <td>$${o.pdf_url
+          ? '<a href="'+esc(o.pdf_url)+'" target="_blank" rel="noopener">Ouvrir la facture</a>'
+          : '—'}
+        </td>
+      </tr>`).join('')
+    : '<tr><td colspan="6">Aucune commande pour le moment.</td></tr>';
+}
+
+async function loadSpot() {
+  const response = await fetch('/api/spot-status', {cache:'no-store'});
+  if (!response.ok) throw new Error('Impossible de lire le statut Spot.');
+
+  const data = await response.json();
+  $('spot-status').textContent =
+    'Messages SQS en attente : ' + data.sqs_pending +
+    '. Instances Spot : ' +
+    (data.spot_instances.length
+      ? data.spot_instances.map(i => i.id + ' (' + i.state + ')').join(', ')
+      : 'aucune instance active');
+}
+
+if (CFG.spot) {
+  $('spot').hidden = false;
+
+  fetch('/api/info', {cache:'no-store'})
+    .then(response => response.json())
+    .then(data => {
+      $('infra').textContent =
+        'Serveur : ' + data.instance + ' — région ' + data.region +
+        ' — Launch Template ' + data.launch_template;
+    })
+    .catch(() => {});
+
+  $('spot-btn').addEventListener('click', async () => {
+    const button = $('spot-btn');
+    button.disabled = true;
+
+    try {
+      const response = await fetch('/api/launch-spot', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:'{}'
+      });
+      const data = await response.json();
+
+      if (!response.ok || data.error) throw new Error(data.error || 'Échec du lancement.');
+
+      notify('Instance ' + data.instance_id + ' lancée (' + data.mode + ').');
+      await loadSpot();
+    } catch (error) {
+      notify(error.message);
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  loadSpot().catch(error => notify(error.message));
+  window.setInterval(() => loadSpot().catch(() => {}), 5000);
+}
+
+$('refresh').addEventListener('click', () => {
+  load().catch(error => notify(error.message));
+});
+
+load().catch(error => notify(error.message));
+window.setInterval(() => load().catch(() => {}), 10000);
+</script>
+</body>
+</html>
+"""
+
+
+# ----------------------------------------------------------------------
+# STYLE NÉOLIA
+# ----------------------------------------------------------------------
+
+STYLE_CSS = r"""
+:root {
+  --ink:#25213B;
+  --muted:#716B83;
+  --paper:#FFF9F5;
+  --white:#FFFFFF;
+  --line:#F0E5E8;
+  --pink:#FF6F91;
+  --pink-light:#FFE0E8;
+  --orange:#FF9F68;
+  --yellow:#FFD166;
+  --purple:#8C78FF;
+  --mint:#7EDCC5;
+  --blue:#8ED8F8;
+  --green:#267B65;
+  --red:#C83F60;
+}
+* { box-sizing:border-box; margin:0; padding:0; }
+html { scroll-behavior:smooth; scroll-padding-top:90px; }
+body {
+  font-family:'DM Sans',system-ui,sans-serif;
+  background:var(--paper);
+  color:var(--ink);
+  line-height:1.6;
+}
+h1,h2,h3,.logo,.stat b {
+  font-family:'Manrope',system-ui,sans-serif;
+  letter-spacing:-.045em;
+}
+a { color:inherit; }
+button,input { font:inherit; }
+button {
+  border:0; border-radius:999px; padding:.75rem 1.1rem;
+  background:var(--ink); color:#fff; font-weight:700;
+  cursor:pointer; transition:transform .2s,background .2s,box-shadow .2s;
+}
+button:hover { background:var(--purple); transform:translateY(-1px); box-shadow:0 7px 20px #8c78ff33; }
+button:disabled { opacity:.45; cursor:not-allowed; transform:none; box-shadow:none; }
+button.ghost {
+  background:#fff; color:var(--ink); border:1px solid var(--line);
+}
+button.ghost:hover { background:var(--pink-light); border-color:var(--pink); }
+input {
+  width:100%; padding:.75rem .85rem; border:1px solid var(--line);
+  background:#fff; border-radius:12px; color:var(--ink);
+}
+input:focus { outline:3px solid #8c78ff30; border-color:var(--purple); }
+label { display:block; font-size:.82rem; font-weight:700; color:var(--muted); margin:.8rem 0 .25rem; }
+.wrap { max-width:1240px; margin:0 auto; padding:0 1.5rem; }
+
+.top {
+  position:sticky; top:0; z-index:5;
+  background:#fff9f5ed; backdrop-filter:blur(16px);
+  border-bottom:1px solid var(--line);
+}
+.top-inner { display:flex; justify-content:space-between; align-items:center; gap:1rem; padding-top:1rem; padding-bottom:1rem; }
+.logo { font-size:1.65rem; font-weight:800; letter-spacing:-.075em; text-decoration:none; white-space:nowrap; }
+.logo-dot { color:var(--pink); }
+.admin-mark { font:700 .65rem 'DM Sans',sans-serif; color:var(--purple); letter-spacing:.13em; }
+nav { display:flex; align-items:center; gap:1.3rem; flex-wrap:wrap; }
+nav a { color:var(--muted); text-decoration:none; font-size:.9rem; font-weight:700; }
+nav a:hover { color:var(--pink); }
+
+.hero {
+  overflow:hidden; color:#fff;
+  background:linear-gradient(125deg,#34265F 0%,#6D4AE8 55%,#A77CFF 100%);
+  border-radius:0 0 34px 34px; position:relative; isolation:isolate;
+}
+.hero:before {
+  content:""; position:absolute; z-index:-1; width:350px; height:350px;
+  border-radius:50%; background:var(--pink); opacity:.75;
+  right:4%; top:-230px;
+}
+.hero:after {
+  content:""; position:absolute; z-index:-1; width:220px; height:220px;
+  border-radius:50%; background:var(--yellow); opacity:.8;
+  right:32%; bottom:-170px;
+}
+.hero-inner { display:grid; grid-template-columns:1.2fr .8fr; align-items:center; gap:2rem; padding-top:4.7rem; padding-bottom:4.7rem; }
+.eyebrow,.section-kicker {
+  color:var(--pink); font-weight:800; text-transform:uppercase;
+  letter-spacing:.18em; font-size:.73rem;
+}
+.hero .eyebrow { color:#FFD8E2; margin-bottom:1rem; }
+.hero h1 { font-size:clamp(2.8rem,6vw,5.2rem); line-height:1.02; font-weight:800; max-width:11ch; }
+.hero-intro { color:#F2ECFF; max-width:44ch; margin:1.35rem 0 1.7rem; font-size:1.05rem; }
+.cta {
+  display:inline-flex; gap:.8rem; align-items:center; text-decoration:none;
+  background:var(--yellow); color:#34265F; padding:.95rem 1.35rem;
+  border-radius:999px; font-weight:800; box-shadow:0 8px 24px #271c4e40;
+}
+.cta:hover { transform:translateY(-2px); }
+.hero-art { min-width:0; }
+.hero-art svg { display:block; width:100%; max-height:340px; filter:drop-shadow(0 15px 15px #21134033); }
+.art-caption { display:block; text-align:center; color:#F2ECFF; font-size:.78rem; margin-top:.8rem; letter-spacing:.08em; }
+
+.main-layout { display:grid; grid-template-columns:minmax(0,1fr) 340px; gap:2rem; align-items:start; padding-top:3rem; padding-bottom:4rem; }
+.section-head { display:flex; justify-content:space-between; align-items:end; gap:1rem; margin-bottom:1.4rem; }
+.section-head h1,.section-head h2 { font-size:2rem; line-height:1.2; }
+.section-kicker { margin-bottom:.35rem; color:var(--purple); }
+.collection-note { color:var(--muted); font-size:.9rem; }
+.filters { display:flex; gap:.55rem; flex-wrap:wrap; margin-bottom:1.4rem; }
+.filters button { background:#fff; color:var(--muted); border:1px solid var(--line); }
+.filters button[aria-pressed="true"] { background:var(--ink); color:white; border-color:var(--ink); }
+.grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(205px,1fr)); gap:1rem; }
+.prod {
+  overflow:hidden; display:flex; flex-direction:column;
+  background:#fff; border:1px solid var(--line); border-radius:22px;
+  box-shadow:0 5px 20px #32234b07; transition:transform .22s,box-shadow .22s;
+}
+.prod:hover { transform:translateY(-4px); box-shadow:0 14px 30px #32234b12; }
+.pic {
+  height:180px; display:flex; align-items:center; justify-content:center;
+  position:relative; overflow:hidden; background:var(--product-color,#FFB4C8);
+}
+.pic:before { content:""; position:absolute; width:150px; height:150px; border-radius:50%; background:#ffffff69; top:14px; }
+.pic svg { position:relative; z-index:1; height:150px; width:120px; filter:drop-shadow(0 8px 8px #32234b15); }
+.category-tag { position:absolute; bottom:10px; left:10px; background:#fffdf0dd; padding:.2rem .6rem; border-radius:999px; font-size:.68rem; font-weight:800; }
+.prod-body { padding:1.1rem; display:flex; flex:1; flex-direction:column; gap:.45rem; }
+.prod h3 { font-size:1.1rem; line-height:1.3; }
+.desc { color:var(--muted); font-size:.88rem; flex:1; }
+.stock { font-size:.78rem; font-weight:700; }
+.available { color:var(--green); }
+.unavailable { color:var(--red); }
+.product-bottom { display:flex; align-items:center; justify-content:space-between; gap:.5rem; margin-top:.65rem; }
+.price { font-size:1.05rem; font-weight:800; white-space:nowrap; }
+.product-bottom button { font-size:.82rem; padding:.62rem .85rem; }
+
+.cart {
+  position:sticky; top:92px; background:white; border:1px solid var(--line);
+  border-radius:24px; padding:1.3rem; box-shadow:0 12px 35px #32234b09;
+}
+.cart h2 { font-size:1.55rem; margin-bottom:.85rem; }
+.line { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:.45rem; padding:.85rem 0; border-bottom:1px solid var(--line); font-size:.88rem; }
+.line small { display:block; color:var(--muted); }
+.qty { display:flex; align-items:center; justify-content:flex-end; gap:.45rem; }
+.quantity { padding:.12rem .55rem; min-width:30px; }
+.subtotal { grid-column:2; text-align:right; }
+.total { display:flex; justify-content:space-between; gap:.5rem; align-items:center; margin:1rem 0; padding-top:.25rem; }
+.total strong { font-size:1.15rem; }
+.account { background:#FFF9F5; border:1px solid var(--line); border-radius:16px; padding:1rem; margin:1rem 0; }
+.account-actions,.cart-actions { display:flex; gap:.5rem; margin-top:.65rem; }
+.account-actions button,.cart-actions button { flex:1; padding:.68rem .55rem; font-size:.81rem; }
+.status,.fine-print,.empty { color:var(--muted); font-size:.83rem; margin-top:.6rem; overflow-wrap:anywhere; }
+.err { color:var(--red); font-size:.85rem; margin-top:.5rem; min-height:1.2em; }
+.fine-print { margin-top:1rem; line-height:1.5; }
+footer { border-top:1px solid var(--line); padding:1.5rem 0; }
+.footer-inner { display:flex; justify-content:space-between; align-items:center; gap:1rem; color:var(--muted); font-size:.85rem; }
+.footer-inner .logo { color:var(--ink); }
+
+.toast {
+  position:fixed; z-index:20; right:20px; bottom:20px;
+  max-width:min(420px,calc(100vw - 40px)); background:var(--ink); color:white;
+  border-radius:14px; padding:1rem 1.2rem; opacity:0; transform:translateY(12px);
+  pointer-events:none; transition:opacity .2s,transform .2s;
+}
+.toast.visible { opacity:1; transform:translateY(0); }
+.thanks {
+  display:none; position:fixed; inset:0; z-index:15; padding:1.5rem;
+  align-items:center; justify-content:center; background:#25213bbb; backdrop-filter:blur(7px);
+}
+.thanks.open { display:flex; }
+.thanks-card { background:white; padding:2rem; border-radius:26px; max-width:450px; width:100%; }
+.thanks-card h2 { font-size:2rem; line-height:1.15; margin:.8rem 0; }
+.thanks-card p { color:var(--muted); }
+.success-mark { display:grid; place-items:center; width:48px; height:48px; border-radius:50%; background:#D7F7EB; color:#17674F; font-size:1.5rem; }
+.ref { margin:1rem 0; background:var(--pink-light); padding:.8rem; border-radius:12px; font-weight:800; overflow-wrap:anywhere; }
+.admin-main { padding-top:2.5rem; padding-bottom:3rem; }
+.stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(155px,1fr)); gap:1rem; margin:1.5rem 0; }
+.stat { background:#fff; border:1px solid var(--line); border-radius:20px; padding:1.2rem; }
+.stat b { display:block; font-size:2.1rem; line-height:1.2; color:var(--purple); overflow-wrap:anywhere; }
+.stat span { color:var(--muted); font-size:.86rem; }
+.panel { background:#fff; border:1px solid var(--line); border-radius:22px; padding:1.3rem; margin-bottom:1.5rem; }
+.table-wrap { overflow-x:auto; }
+table { width:100%; border-collapse:collapse; font-size:.85rem; }
+th,td { text-align:left; vertical-align:top; border-bottom:1px solid var(--line); padding:.8rem .6rem; }
+th { color:var(--muted); font-size:.75rem; }
+td small { color:var(--muted); }
+.tag { display:inline-block; border-radius:99px; padding:.2rem .6rem; font-size:.78rem; font-weight:800; white-space:nowrap; }
+.tag.pending { background:#FFF0C7; color:#805700; }
+.tag.shipped { background:#D7F7EB; color:#17674F; }
+td a { color:#6D4AE8; font-weight:700; }
+[hidden] { display:none !important; }
+:focus-visible { outline:3px solid var(--purple); outline-offset:3px; }
+
+@media(max-width:900px) {
+  .main-layout { grid-template-columns:1fr; }
+  .cart { position:static; }
+  .hero-inner { grid-template-columns:1fr .8fr; gap:1rem; }
+}
+@media(max-width:650px) {
+  .wrap { padding-left:1rem; padding-right:1rem; }
+  .top-inner { align-items:flex-start; flex-direction:column; }
+  nav { gap:.7rem; }
+  nav a { font-size:.82rem; }
+  .hero-inner { grid-template-columns:1fr; padding-top:3rem; padding-bottom:3rem; }
+  .hero h1 { font-size:2.8rem; }
+  .hero-art svg { max-height:245px; }
+  .main-layout { padding-top:2rem; }
+  .section-head { align-items:flex-start; flex-direction:column; }
+  .collection-note { display:none; }
+  .grid { grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); }
+  .footer-inner { flex-wrap:wrap; }
+  .panel { padding:.8rem; }
+}
+"""
+
+
+PAGES = {
+    "/": ("text/html; charset=utf-8", SHOP_HTML),
+    "/index.html": ("text/html; charset=utf-8", SHOP_HTML),
+    "/admin": ("text/html; charset=utf-8", ADMIN_HTML),
+    "/admin/": ("text/html; charset=utf-8", ADMIN_HTML),
+    "/style.css": ("text/css; charset=utf-8", STYLE_CSS),
+    "/config.js": ("application/javascript; charset=utf-8", CONFIG_JS),
+}
+
+
+# ----------------------------------------------------------------------
+# ROUTES HTTP / API AWS
+# ----------------------------------------------------------------------
+
 class ShopHandler(BaseHTTPRequestHandler):
     def _send_json(self, code, payload):
+        data = json.dumps(payload, cls=DecimalEncoder).encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
-        self.wfile.write(json.dumps(payload, cls=DecimalEncoder).encode("utf-8"))
+        self.wfile.write(data)
+
+    def _read_json(self):
+        length = int(self.headers.get("Content-Length", 0))
+        raw = self.rfile.read(length).decode("utf-8") if length > 0 else ""
+        return json.loads(raw) if raw.strip() else {}
 
     def do_GET(self):
-        if self.path in ("/", "/index.html"):
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.end_headers()
-            self.wfile.write(HTML_PAGE.encode("utf-8"))
-        elif self.path == "/api/products":
-            ddb = boto3.resource("dynamodb", region_name=REGION)
-            items = ddb.Table(PRODUCTS_TABLE).scan().get("Items", [])
-            items.sort(key=lambda x: x.get("product_id", ""))
-            self._send_json(200, items)
-        elif self.path == "/api/orders":
-            ddb = boto3.resource("dynamodb", region_name=REGION)
-            orders = ddb.Table(ORDERS_TABLE).scan().get("Items", [])
-            orders.sort(key=lambda x: x.get("created_at", ""), reverse=True)
-            for o in orders:
-                if o.get("invoice_s3_key"):
-                    o["pdf_url"] = f"/api/invoice?key={urllib.parse.quote(o['invoice_s3_key'])}"
-            self._send_json(200, orders)
-        elif self.path.startswith("/api/invoice"):
-            parsed = urllib.parse.urlparse(self.path)
-            params = urllib.parse.parse_qs(parsed.query)
-            key = params.get("key", [""])[0]
-            if not key:
-                self.send_response(400)
-                self.end_headers()
-                return
-            s3 = boto3.client(
-                "s3",
-                region_name=REGION,
-                endpoint_url=f"https://s3.{REGION}.amazonaws.com",
-                config=Config(signature_version="s3v4"),
-            )
-            obj = s3.get_object(Bucket=INVOICES_BUCKET, Key=key)
-            pdf_bytes = obj["Body"].read()
-            filename = key.split("/")[-1]
-            self.send_response(200)
-            self.send_header("Content-Type", "application/pdf")
-            self.send_header("Content-Disposition", f'inline; filename="{filename}"')
-            self.send_header("Content-Length", str(len(pdf_bytes)))
-            self.end_headers()
-            self.wfile.write(pdf_bytes)
-        elif self.path == "/api/spot-status":
-            sqs = boto3.client("sqs", region_name=REGION)
-            ec2 = boto3.client("ec2", region_name=REGION)
-            attrs = sqs.get_queue_attributes(
-                QueueUrl=SQS_QUEUE_URL,
-                AttributeNames=["ApproximateNumberOfMessages", "ApproximateNumberOfMessagesNotVisible"],
-            ).get("Attributes", {})
-            pending = int(attrs.get("ApproximateNumberOfMessages", 0)) + int(attrs.get("ApproximateNumberOfMessagesNotVisible", 0))
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
 
-            res = ec2.describe_instances(
-                Filters=[{"Name": "tag:Role", "Values": ["spot-batch-worker"]}]
-            )
-            instances = []
-            for r in res.get("Reservations", []):
-                for inst in r.get("Instances", []):
-                    instances.append({
-                        "id": inst["InstanceId"],
-                        "state": inst["State"]["Name"],
-                    })
-            self._send_json(200, {"sqs_pending": pending, "spot_instances": instances})
-        elif self.path == "/health":
-            self._send_json(200, {"status": "healthy", "instance": INSTANCE_ID})
-        else:
-            self.send_response(404)
-            self.end_headers()
+        try:
+            if path in PAGES:
+                content_type, content = PAGES[path]
+                data = content.encode("utf-8")
+
+                self.send_response(200)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header(
+                    "Cache-Control",
+                    "no-store, no-cache, must-revalidate, max-age=0",
+                )
+                self.send_header("Pragma", "no-cache")
+                self.send_header("Expires", "0")
+                self.end_headers()
+                self.wfile.write(data)
+                return
+
+            if path == "/health":
+                self._send_json(200, {
+                    "status": "healthy",
+                    "instance": INSTANCE_ID,
+                })
+                return
+
+            if path == "/api/products":
+                ddb = boto3.resource("dynamodb", region_name=REGION)
+                items = ddb.Table(PRODUCTS_TABLE).scan().get("Items", [])
+
+                for product in items:
+                    product["category"] = str(
+                        product.get("category")
+                        or product.get("categorie")
+                        or ""
+                    ).lower()
+
+                items.sort(key=lambda item: item.get("product_id", ""))
+                self._send_json(200, items)
+                return
+
+            if path == "/api/orders":
+                ddb = boto3.resource("dynamodb", region_name=REGION)
+                orders = ddb.Table(ORDERS_TABLE).scan().get("Items", [])
+                orders.sort(
+                    key=lambda item: item.get("created_at", ""),
+                    reverse=True,
+                )
+
+                for order in orders:
+                    if order.get("invoice_s3_key"):
+                        order["pdf_url"] = (
+                            "/api/invoice?key="
+                            + urllib.parse.quote(order["invoice_s3_key"])
+                        )
+
+                self._send_json(200, orders)
+                return
+
+            if path == "/api/invoice":
+                key = urllib.parse.parse_qs(parsed.query).get("key", [""])[0]
+
+                if not key:
+                    self._send_json(400, {"error": "Clé de facture manquante."})
+                    return
+
+                s3 = boto3.client(
+                    "s3",
+                    region_name=REGION,
+                    endpoint_url=f"https://s3.{REGION}.amazonaws.com",
+                    config=Config(signature_version="s3v4"),
+                )
+
+                obj = s3.get_object(Bucket=INVOICES_BUCKET, Key=key)
+                pdf_bytes = obj["Body"].read()
+                filename = key.split("/")[-1]
+
+                self.send_response(200)
+                self.send_header("Content-Type", "application/pdf")
+                self.send_header(
+                    "Content-Disposition",
+                    f'inline; filename="{filename}"',
+                )
+                self.send_header("Content-Length", str(len(pdf_bytes)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(pdf_bytes)
+                return
+
+            if path == "/api/spot-status":
+                sqs = boto3.client("sqs", region_name=REGION)
+                ec2 = boto3.client("ec2", region_name=REGION)
+
+                attrs = sqs.get_queue_attributes(
+                    QueueUrl=SQS_QUEUE_URL,
+                    AttributeNames=[
+                        "ApproximateNumberOfMessages",
+                        "ApproximateNumberOfMessagesNotVisible",
+                    ],
+                ).get("Attributes", {})
+
+                pending = (
+                    int(attrs.get("ApproximateNumberOfMessages", 0))
+                    + int(attrs.get("ApproximateNumberOfMessagesNotVisible", 0))
+                )
+
+                result = ec2.describe_instances(
+                    Filters=[
+                        {
+                            "Name": "tag:Role",
+                            "Values": ["spot-batch-worker"],
+                        }
+                    ]
+                )
+
+                instances = [
+                    {
+                        "id": instance["InstanceId"],
+                        "state": instance["State"]["Name"],
+                    }
+                    for reservation in result.get("Reservations", [])
+                    for instance in reservation.get("Instances", [])
+                ]
+
+                self._send_json(200, {
+                    "sqs_pending": pending,
+                    "spot_instances": instances,
+                })
+                return
+
+            if path == "/api/info":
+                self._send_json(200, {
+                    "instance": INSTANCE_ID,
+                    "region": REGION,
+                    "launch_template": SPOT_LT_ID,
+                })
+                return
+
+            self._send_json(404, {"error": "Route introuvable."})
+
+        except Exception as exc:
+            self._send_json(500, {"error": str(exc)})
 
     def do_POST(self):
-        try:
-            length = int(self.headers.get("Content-Length", 0))
-            raw = self.rfile.read(length).decode("utf-8") if length > 0 else ""
-            body = json.loads(raw) if raw.strip() else {}
+        path = urllib.parse.urlparse(self.path).path
 
-            if self.path == "/api/order":
-                lmb = boto3.client("lambda", region_name=REGION)
-                resp = lmb.invoke(
-                    FunctionName=LAMBDA_NAME,
-                    InvocationType="RequestResponse",
-                    Payload=json.dumps(body),
-                )
-                result = json.loads(resp["Payload"].read().decode("utf-8"))
-                self._send_json(200, result)
-            elif self.path == "/api/subscribe":
-                email = body.get("email", "").strip()
+        try:
+            body = self._read_json()
+
+            if path == "/api/order":
+                customer_name = str(
+                    body.get("customer_name", "")
+                ).strip()[:80]
+                customer_email = str(
+                    body.get("customer_email", "")
+                ).strip()[:120]
+
+                # Accepte le format NÉOLIA (liste items) et le format
+                # précédent (un seul product_id / qty).
+                items = body.get("items")
+
+                if not items and body.get("product_id"):
+                    items = [{
+                        "product_id": body.get("product_id"),
+                        "qty": body.get("qty", 1),
+                    }]
+
+                if (
+                    not customer_name
+                    or not re.match(r"^\S+@\S+\.\S+$", customer_email)
+                    or not isinstance(items, list)
+                    or not items
+                ):
+                    self._send_json(400, {
+                        "error": "Nom, e-mail et au moins un article sont requis."
+                    })
+                    return
+
+                lambda_client = boto3.client("lambda", region_name=REGION)
+                order_ids = []
+
+                for item in items:
+                    product_id = str(item.get("product_id", "")).strip()
+                    try:
+                        quantity = int(item.get("qty", 0))
+                    except (TypeError, ValueError):
+                        quantity = 0
+
+                    if not product_id or quantity < 1:
+                        self._send_json(400, {
+                            "error": "Article ou quantité invalide."
+                        })
+                        return
+
+                    payload = {
+                        "product_id": product_id,
+                        "qty": quantity,
+                        "customer_name": customer_name,
+                        "customer_email": customer_email,
+                    }
+
+                    result = lambda_client.invoke(
+                        FunctionName=LAMBDA_NAME,
+                        InvocationType="RequestResponse",
+                        Payload=json.dumps(payload).encode("utf-8"),
+                    )
+
+                    if result.get("FunctionError"):
+                        message = result["Payload"].read().decode("utf-8")
+                        self._send_json(502, {
+                            "error": "La fonction de commande a échoué.",
+                            "detail": message,
+                        })
+                        return
+
+                    response_text = result["Payload"].read().decode("utf-8")
+
+                    try:
+                        order_result = json.loads(response_text)
+                    except json.JSONDecodeError:
+                        self._send_json(502, {
+                            "error": "Réponse invalide du service de commande."
+                        })
+                        return
+
+                    if order_result.get("error"):
+                        self._send_json(400, {
+                            "error": order_result["error"]
+                        })
+                        return
+
+                    order_id = order_result.get("order_id")
+                    if order_id is not None:
+                        order_ids.append(str(order_id))
+
+                self._send_json(200, {
+                    "status": "ok",
+                    "order_ids": order_ids,
+                })
+                return
+
+            if path == "/api/subscribe":
+                email = str(body.get("email", "")).strip()
+
+                if not re.match(r"^\S+@\S+\.\S+$", email):
+                    self._send_json(400, {"error": "Adresse e-mail invalide."})
+                    return
+
                 sns = boto3.client("sns", region_name=REGION)
-                filter_policy = json.dumps({"customer_email": [email]})
-                sns.subscribe(
+                subscription = sns.subscribe(
                     TopicArn=SNS_CONFIRM_ARN,
                     Protocol="email",
                     Endpoint=email,
-                    Attributes={"FilterPolicy": filter_policy},
+                    Attributes={
+                        "FilterPolicy": json.dumps({
+                            "customer_email": [email]
+                        })
+                    },
                 )
+
                 self._send_json(200, {
                     "status": "SUBSCRIBED",
-                    "message": f"Abonnement SNS créé pour {email}.",
+                    "subscription_arn": subscription.get("SubscriptionArn"),
                 })
-            elif self.path == "/api/launch-spot":
+                return
+
+            if path == "/api/launch-spot":
                 ec2 = boto3.client("ec2", region_name=REGION)
-                inst_id = None
-                mode_used = "EC2 Spot"
-                for itype in ("t3.micro", "t3.small"):
+                instance_id = None
+                mode = "EC2 Spot"
+
+                for instance_type in ("t3.micro", "t3.small"):
                     try:
-                        run_resp = ec2.run_instances(
-                            LaunchTemplate={"LaunchTemplateId": SPOT_LT_ID, "Version": "$Latest"},
-                            InstanceType=itype,
+                        response = ec2.run_instances(
+                            LaunchTemplate={
+                                "LaunchTemplateId": SPOT_LT_ID,
+                                "Version": "$Latest",
+                            },
+                            InstanceType=instance_type,
                             InstanceMarketOptions={
                                 "MarketType": "spot",
-                                "SpotOptions": {"SpotInstanceType": "one-time"},
+                                "SpotOptions": {
+                                    "SpotInstanceType": "one-time"
+                                },
                             },
                             MinCount=1,
                             MaxCount=1,
                         )
-                        inst_id = run_resp["Instances"][0]["InstanceId"]
-                        mode_used = f"EC2 Spot ({itype})"
+
+                        instance_id = response["Instances"][0]["InstanceId"]
+                        mode = f"EC2 Spot ({instance_type})"
                         break
                     except Exception:
                         continue
-                if not inst_id:
-                    run_resp = ec2.run_instances(
-                        LaunchTemplate={"LaunchTemplateId": SPOT_LT_ID, "Version": "$Latest"},
+
+                if not instance_id:
+                    response = ec2.run_instances(
+                        LaunchTemplate={
+                            "LaunchTemplateId": SPOT_LT_ID,
+                            "Version": "$Latest",
+                        },
                         InstanceType="t3.micro",
                         MinCount=1,
                         MaxCount=1,
                     )
-                    inst_id = run_resp["Instances"][0]["InstanceId"]
-                    mode_used = "EC2 Éphémère (Fallback Capacité Spot AWS -> Free Tier t3.micro)"
-                self._send_json(200, {"status": "LAUNCHED", "instance_id": inst_id, "mode": mode_used})
-            else:
-                self.send_response(404)
-                self.end_headers()
-        except Exception as e:
-            self._send_json(500, {"error": str(e)})
+
+                    instance_id = response["Instances"][0]["InstanceId"]
+                    mode = "EC2 éphémère (repli sans Spot)"
+
+                self._send_json(200, {
+                    "status": "LAUNCHED",
+                    "instance_id": instance_id,
+                    "mode": mode,
+                })
+                return
+
+            self._send_json(404, {"error": "Route introuvable."})
+
+        except Exception as exc:
+            self._send_json(500, {"error": str(exc)})
+
+    def log_message(self, fmt, *args):
+        # Conserve des logs HTTP standards dans la sortie du service.
+        super().log_message(fmt, *args)
 
 
 if __name__ == "__main__":
+    print(
+        f"NÉOLIA — serveur web sur 0.0.0.0:80 "
+        f"| {INSTANCE_ID} | région {REGION}",
+        flush=True,
+    )
     HTTPServer(("0.0.0.0", 80), ShopHandler).serve_forever()
