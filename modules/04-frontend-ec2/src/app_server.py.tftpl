@@ -1702,7 +1702,8 @@ async function load() {
   }
   if (!response.ok) throw new Error('Impossible de charger les commandes.');
 
-  const orders = await response.json();
+  const data = await response.json();
+  const orders = Array.isArray(data) ? data : (data.orders || []);
   const shipped = orders.filter(o => o.status === 'SHIPPED').length;
   const hasTotal = orders.some(o => o.total_eur !== undefined);
 
@@ -2448,17 +2449,21 @@ class ShopHandler(BaseHTTPRequestHandler):
                 self._send_json(code, res)
                 return
 
-            # 7. Compte utilisateur : Commandes & statut
+            # 7. Compte utilisateur et Administration : Commandes
             if path in ["/api/user/orders", "/api/orders"]:
                 email = query.get("email", [""])[0] or query.get("customer_email", [""])[0]
                 auth_header = self.headers.get("Authorization", "")
-                if (not email or not re.match(r"^\S+@\S+\.\S+$", email)) and auth_header.startswith("Bearer "):
-                    jwt_token = auth_header.split(" ", 1)[1].strip()
-                    jwt_claims = decode_jwt_payload(jwt_token)
-                    if jwt_claims.get("email"):
-                        email = jwt_claims.get("email")
 
-                # Si aucune adresse email n'est précisée, c'est une consultation globale réservée à l'administrateur
+                # Sur /api/user/orders : déduire l'email depuis le jeton Bearer si absent de l'URL
+                # Sur /api/orders SANS paramètre email : consultation globale de toutes les commandes pour l'admin
+                if path == "/api/user/orders":
+                    if (not email or not re.match(r"^\S+@\S+\.\S+$", email)) and auth_header.startswith("Bearer "):
+                        jwt_token = auth_header.split(" ", 1)[1].strip()
+                        jwt_claims = decode_jwt_payload(jwt_token)
+                        if jwt_claims.get("email"):
+                            email = jwt_claims.get("email")
+
+                # Si aucune adresse email n'est précisée (consultation globale), réservé aux administrateurs
                 if not email and not self._is_admin():
                     self._send_json(403, {"status": "ERROR", "statusCode": 403, "error": "Accès réservé aux administrateurs."})
                     return
@@ -2467,11 +2472,17 @@ class ShopHandler(BaseHTTPRequestHandler):
                     "action": "get_user_orders",
                     "customer_email": email,
                 })
-                # Rétrocompatibilité avec l'ancien front admin
-                if code == 200 and isinstance(res, dict) and "orders" in res and not email:
-                    self._send_json(200, res["orders"])
-                else:
-                    self._send_json(code, res)
+
+                # Rétrocompatibilité avec le front admin (qui attend le tableau direct des commandes)
+                if code == 200 and isinstance(res, dict):
+                    if not email:
+                        self._send_json(200, res.get("orders", []))
+                        return
+                    elif "orders" in res and not email:
+                        self._send_json(200, res["orders"])
+                        return
+
+                self._send_json(code, res)
                 return
 
             # 8. Détail d'une commande spécifique
@@ -2486,9 +2497,27 @@ class ShopHandler(BaseHTTPRequestHandler):
             # 9. Admin : Vérification des privilèges
             if path == "/api/admin/check":
                 email = query.get("email", [""])[0]
+                auth_header = self.headers.get("Authorization", "")
+                token = ""
+                if auth_header.startswith("Bearer "):
+                    token = auth_header.split(" ", 1)[1].strip()
+
+                if token:
+                    claims = decode_jwt_payload(token)
+                    groups = claims.get("cognito:groups", [])
+                    if isinstance(groups, list) and "admin" in groups:
+                        self._send_json(200, {
+                            "status": "SUCCESS",
+                            "is_admin": True,
+                            "email": email or claims.get("email", ""),
+                            "groups": groups,
+                        })
+                        return
+
                 code, res = self._invoke_lambda({
                     "action": "admin_check",
                     "email": email,
+                    "access_token": token,
                     "headers": dict(self.headers),
                 })
                 self._send_json(code, res)

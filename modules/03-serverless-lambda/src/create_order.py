@@ -12,6 +12,7 @@ Ce module gère l'ensemble des routes et de la logique métier serverless :
 """
 
 import json
+import base64
 import os
 import re
 import uuid
@@ -148,7 +149,7 @@ def get_product(event_data):
 def get_user_profile(event_data):
     """
     Récupère le profil complet de l'utilisateur Cognito :
-    - Soit via son AccessToken (Bearer token)
+    - Soit via son AccessToken ou ID Token (Bearer token)
     - Soit via son adresse e-mail / nom d'utilisateur (AdminGetUser)
     """
     token = event_data.get("access_token") or event_data.get("token")
@@ -160,6 +161,20 @@ def get_user_profile(event_data):
     if auth_header.startswith("Bearer "):
         token = auth_header.split(" ", 1)[1].strip()
 
+    # Décodage préventif des claims si un JWT (ID Token ou Access Token) est fourni
+    jwt_claims = {}
+    if token and "." in token:
+        try:
+            parts = token.split(".")
+            if len(parts) >= 2:
+                payload_b64 = parts[1] + "=" * ((4 - len(parts[1]) % 4) % 4)
+                jwt_claims = json.loads(base64.urlsafe_b64decode(payload_b64.encode("ascii")).decode("utf-8"))
+        except Exception:
+            pass
+
+    if not email and jwt_claims:
+        email = jwt_claims.get("email") or jwt_claims.get("cognito:username")
+
     if not token and not email:
         return {
             "status": "ERROR",
@@ -169,30 +184,59 @@ def get_user_profile(event_data):
 
     user_info = {}
     groups = []
+    username = None
+
+    # Extraction directe depuis les claims JWT si disponibles
+    if jwt_claims:
+        if jwt_claims.get("cognito:groups"):
+            raw_groups = jwt_claims.get("cognito:groups")
+            if isinstance(raw_groups, list):
+                groups = list(raw_groups)
+        username = jwt_claims.get("cognito:username") or jwt_claims.get("sub")
+        if jwt_claims.get("email"):
+            user_info["email"] = jwt_claims.get("email")
+        if jwt_claims.get("name"):
+            user_info["name"] = jwt_claims.get("name")
+        if username:
+            user_info["username"] = username
 
     try:
-        if token:
-            user_res = cognito.get_user(AccessToken=token)
-            username = user_res.get("Username")
-            attrs = _extract_user_attributes(user_res.get("UserAttributes", []))
-            user_info.update(attrs)
-            user_info["username"] = username
-        else:
-            if not USER_POOL_ID:
-                return {"status": "ERROR", "statusCode": 500, "error": "USER_POOL_ID non configuré."}
-            user_res = cognito.admin_get_user(UserPoolId=USER_POOL_ID, Username=email)
-            username = user_res.get("Username")
-            attrs = _extract_user_attributes(user_res.get("UserAttributes", []))
-            user_info.update(attrs)
-            user_info["username"] = username
-            user_info["enabled"] = user_res.get("Enabled", True)
-            user_info["user_status"] = user_res.get("UserStatus", "UNKNOWN")
+        user_res = None
+        # Si vrai Access Token, tentative cognito.get_user
+        if token and not user_info.get("email"):
+            try:
+                user_res = cognito.get_user(AccessToken=token)
+                username = user_res.get("Username")
+                attrs = _extract_user_attributes(user_res.get("UserAttributes", []))
+                user_info.update(attrs)
+                user_info["username"] = username
+            except Exception:
+                user_res = None
+
+        # Fallback AdminGetUser avec email ou username
+        lookup_user = email or username or (jwt_claims.get("sub") if jwt_claims else None)
+        if USER_POOL_ID and lookup_user and not user_info.get("email"):
+            try:
+                user_res = cognito.admin_get_user(UserPoolId=USER_POOL_ID, Username=lookup_user)
+                username = user_res.get("Username")
+                attrs = _extract_user_attributes(user_res.get("UserAttributes", []))
+                user_info.update(attrs)
+                user_info["username"] = username
+                user_info["enabled"] = user_res.get("Enabled", True)
+                user_info["user_status"] = user_res.get("UserStatus", "UNKNOWN")
+            except Exception:
+                pass
+
+        if not user_info and jwt_claims:
+            user_info["email"] = jwt_claims.get("email", email)
+            user_info["username"] = jwt_claims.get("cognito:username") or jwt_claims.get("sub") or email
 
         # Récupération des groupes Cognito pour déterminer si l'utilisateur est admin
-        if USER_POOL_ID and username:
+        target = user_info.get("username") or email
+        if USER_POOL_ID and target and not groups:
             try:
                 grp_res = cognito.admin_list_groups_for_user(
-                    UserPoolId=USER_POOL_ID, Username=username
+                    UserPoolId=USER_POOL_ID, Username=target
                 )
                 groups = [g["GroupName"] for g in grp_res.get("Groups", [])]
             except Exception:
@@ -205,11 +249,11 @@ def get_user_profile(event_data):
             "status": "SUCCESS",
             "profile": user_info,
         }
-    except ClientError as e:
+    except Exception as e:
         return {
             "status": "ERROR",
             "statusCode": 400,
-            "error": e.response.get("Error", {}).get("Message", str(e)),
+            "error": str(e),
         }
 
 
