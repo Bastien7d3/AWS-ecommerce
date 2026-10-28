@@ -447,22 +447,6 @@ def register_user(event_data):
         user_sub = sign_up_res.get("UserSub")
         confirmed = sign_up_res.get("UserConfirmed", False)
 
-        # Auto-activation immédiate du compte (aucune vérification par e-mail requise)
-        if USER_POOL_ID:
-            try:
-                cognito.admin_confirm_sign_up(
-                    UserPoolId=USER_POOL_ID,
-                    Username=email,
-                )
-                cognito.admin_update_user_attributes(
-                    UserPoolId=USER_POOL_ID,
-                    Username=email,
-                    UserAttributes=[{"Name": "email_verified", "Value": "true"}],
-                )
-                confirmed = True
-            except Exception as e:
-                print(f"[INFO] Auto-confirmation du compte : {e}")
-
         # Abonnement automatique au Topic SNS pour les notifications de commandes
         sub_arn = None
         if SNS_CONFIRM_ARN:
@@ -481,7 +465,7 @@ def register_user(event_data):
 
         return {
             "status": "SUCCESS",
-            "message": "Compte créé et activé immédiatement ! Aucune vérification requise, vous pouvez vous connecter.",
+            "message": "Compte créé avec succès ! Un e-mail contenant votre code de confirmation vous a été envoyé.",
             "email": email,
             "user_sub": user_sub,
             "user_confirmed": confirmed,
@@ -513,6 +497,32 @@ def confirm_user(event_data):
         return {
             "status": "SUCCESS",
             "message": "Votre compte a été confirmé avec succès. Vous pouvez maintenant vous connecter.",
+        }
+    except ClientError as e:
+        return {
+            "status": "ERROR",
+            "statusCode": 400,
+            "error": e.response.get("Error", {}).get("Message", str(e)),
+        }
+
+
+def resend_confirmation_code(event_data):
+    """Renvoie le code de confirmation Cognito par e-mail."""
+    email = str(event_data.get("email") or event_data.get("username") or "").strip()
+    if not email:
+        return {"status": "ERROR", "statusCode": 400, "error": "Adresse e-mail requise."}
+    if not USER_POOL_CLIENT_ID:
+        return {"status": "ERROR", "statusCode": 500, "error": "USER_POOL_CLIENT_ID non configuré."}
+
+    try:
+        res = cognito.resend_confirmation_code(
+            ClientId=USER_POOL_CLIENT_ID,
+            Username=email,
+        )
+        return {
+            "status": "SUCCESS",
+            "message": "Un nouveau code de confirmation vous a été envoyé par e-mail.",
+            "delivery": res.get("CodeDeliveryDetails", {}),
         }
     except ClientError as e:
         return {
@@ -955,6 +965,8 @@ ROUTES = {
     ("POST", "/api/auth/register"): register_user,
     ("POST", "/api/auth/signup"): register_user,
     ("POST", "/api/auth/confirm"): confirm_user,
+    ("POST", "/api/auth/resend-code"): resend_confirmation_code,
+    ("POST", "/api/auth/resend"): resend_confirmation_code,
 
     # Administration
     ("GET", "/api/admin/check"): admin_check,
@@ -981,6 +993,7 @@ ACTIONS = {
     "get_order_details": get_order_details,
     "register_user": register_user,
     "confirm_user": confirm_user,
+    "resend_confirmation_code": resend_confirmation_code,
     "admin_check": admin_check,
     "admin_list_stocks": admin_list_stocks,
     "admin_update_stock": admin_update_stock,

@@ -71,7 +71,10 @@ INSTANCE_ID = get_instance_info()
 
 CONFIG_JS = (
     "window.APP_CONFIG={auth:true,spot:true,userPoolId:%s,"
-    "userPoolClientId:%s,region:%s};"
+    "userPoolClientId:%s,region:%s};\n"
+    "window.parseJwt=function(t){try{var b=(t||'').split('.')[1];if(!b)return null;b=b.replace(/-/g,'+').replace(/_/g,'/');"
+    "return JSON.parse(decodeURIComponent(atob(b).split('').map(function(c){return'%%'+('00'+c.charCodeAt(0).toString(16)).slice(-2);}).join('')));"
+    "}catch(e){return null;}};"
     % (
         json.dumps(USER_POOL_ID),
         json.dumps(USER_POOL_CLIENT_ID),
@@ -105,7 +108,7 @@ SHOP_HTML = r"""<!DOCTYPE html>
       <nav id="main-nav">
        <a href="#collection">Collection</a>
        <a href="#panier">Panier (<span id="count">0</span>)</a>
-       <a href="/admin">Administration</a>
+       <a href="/login">Connexion</a>
       </nav>
   </div>
 </header>
@@ -435,29 +438,48 @@ function updateCheckoutAuthState() {
 function clearAppSession() {
   sessionStorage.removeItem('jwt_token');
   sessionStorage.removeItem('user_email');
+  sessionStorage.removeItem('user_name');
+  sessionStorage.removeItem('user_is_admin');
   token = null;
   authEmail = null;
 }
 
-function renderHeaderAuth(isLoggedIn) {
+function renderHeaderAuth(isLoggedIn, userName, isAdmin) {
   const nav = $('main-nav');
   if (!nav) return;
 
-  nav.innerHTML =
-    '<a href="#collection">Collection</a>' +
-    '<a href="#panier">Panier (<span id="count">0</span>)</a>' +
-    '<a href="/admin">Administration</a>' +
-    (isLoggedIn
-      ? '<a href="/account">Mon compte</a>' +
-        '<a href="#" id="nav-logout">Déconnexion</a>'
-      : '<a href="/login">Connexion</a>');
+  const displayName = userName || authEmail || 'Mon compte';
+
+  let html = '<a href="#collection">Collection</a>' +
+             '<a href="#panier">Panier (<span id="count">0</span>)</a>';
+
+  if (isAdmin) {
+    html += '<a href="/admin" class="nav-admin-badge" title="Espace Administrateur">👑 Administration</a>';
+  }
+
+  if (isLoggedIn) {
+    html += '<a href="/account" class="nav-user-badge" title="Connecté : ' + esc(displayName) + '">' +
+            '<span class="nav-user-icon">👤</span>' +
+            '<strong class="nav-user-name">' + esc(displayName) + '</strong>' +
+            '</a>' +
+            '<a href="/account">Mon compte</a>' +
+            '<a href="#" id="nav-logout">Déconnexion</a>';
+  } else {
+    html += '<a href="/login">Connexion</a>';
+  }
+
+  nav.innerHTML = html;
 
   const logoutLink = $('nav-logout');
   if (logoutLink) {
     logoutLink.addEventListener('click', logoutAndRedirect);
   }
 
-  // renderCart() actualisera également le compteur après cette modification.
+  const countEl = $('count');
+  if (countEl) {
+    const totalQty = Object.values(cart).reduce((a, b) => a + b, 0);
+    countEl.textContent = totalQty;
+  }
 }
 
 function logoutAndRedirect(event) {
@@ -477,57 +499,106 @@ function logoutAndRedirect(event) {
 }
 
 function initAuthUI() {
-  // Par défaut, ne pas montrer les liens réservés à un utilisateur connecté.
-  renderHeaderAuth(false);
+  const storedToken = sessionStorage.getItem('jwt_token');
+  const storedEmail = sessionStorage.getItem('user_email');
+  let storedName = sessionStorage.getItem('user_name') || localStorage.getItem('neolia_customer_name') || storedEmail;
+  let storedIsAdmin = sessionStorage.getItem('user_is_admin') === 'true';
+
+  if (storedToken && storedEmail) {
+    token = storedToken;
+    authEmail = storedEmail;
+    if (window.parseJwt) {
+      try {
+        const p = window.parseJwt(storedToken);
+        if (p) {
+          if (p.name) storedName = p.name;
+          else if (p.given_name) storedName = (p.given_name + ' ' + (p.family_name || '')).trim();
+          const groups = p['cognito:groups'] || [];
+          if (Array.isArray(groups) && groups.includes('admin')) {
+            storedIsAdmin = true;
+          }
+        }
+      } catch (_) {}
+    }
+    renderHeaderAuth(true, storedName, storedIsAdmin);
+    updateCheckoutAuthState();
+  } else {
+    renderHeaderAuth(false);
+  }
 
   if (
     !CFG.auth ||
     typeof AmazonCognitoIdentity === 'undefined'
   ) {
-    clearAppSession();
-    updateCheckoutAuthState();
-    return;
-  }
-
-  pool = new AmazonCognitoIdentity.CognitoUserPool({
-    UserPoolId: CFG.userPoolId,
-    ClientId: CFG.userPoolClientId
-  });
-
-  const currentUser = pool.getCurrentUser();
-
-  if (!currentUser) {
-    clearAppSession();
-    renderHeaderAuth(false);
-    updateCheckoutAuthState();
-    return;
-  }
-
-  currentUser.getSession((error, session) => {
-    if (error || !session || !session.isValid()) {
-      currentUser.signOut();
+    if (!storedToken) {
       clearAppSession();
-      renderHeaderAuth(false);
       updateCheckoutAuthState();
+    }
+    return;
+  }
+
+  try {
+    pool = new AmazonCognitoIdentity.CognitoUserPool({
+      UserPoolId: CFG.userPoolId,
+      ClientId: CFG.userPoolClientId
+    });
+
+    const currentUser = pool.getCurrentUser();
+
+    if (!currentUser) {
+      if (!storedToken) {
+        clearAppSession();
+        renderHeaderAuth(false);
+        updateCheckoutAuthState();
+      }
       return;
     }
 
-    // Restaurer la session applicative à partir de la session Cognito valide.
-    token = session.getIdToken().getJwtToken();
-    authEmail = currentUser.getUsername();
+    currentUser.getSession((error, session) => {
+      if (error || !session || !session.isValid()) {
+        currentUser.signOut();
+        clearAppSession();
+        renderHeaderAuth(false);
+        updateCheckoutAuthState();
+        return;
+      }
 
-    sessionStorage.setItem('jwt_token', token);
-    sessionStorage.setItem('user_email', authEmail);
+      token = session.getIdToken().getJwtToken();
+      authEmail = currentUser.getUsername();
 
-    renderHeaderAuth(true);
-    updateCheckoutAuthState();
-    renderCart();
+      sessionStorage.setItem('jwt_token', token);
+      sessionStorage.setItem('user_email', authEmail);
 
-    const nameInput = $('name');
-    if (nameInput && !nameInput.value) {
-      nameInput.value = localStorage.getItem('neolia_customer_name') || '';
-    }
-  });
+      let uName = storedName;
+      let isAdmin = false;
+      try {
+        const payload = session.getIdToken().decodePayload();
+        if (payload) {
+          if (payload.name) uName = payload.name;
+          else if (payload.given_name) uName = (payload.given_name + ' ' + (payload.family_name || '')).trim();
+          const groups = payload['cognito:groups'] || [];
+          if (Array.isArray(groups) && groups.includes('admin')) {
+            isAdmin = true;
+          }
+        }
+      } catch (_) {}
+
+      uName = uName || authEmail;
+      sessionStorage.setItem('user_name', uName);
+      sessionStorage.setItem('user_is_admin', isAdmin ? 'true' : 'false');
+
+      renderHeaderAuth(true, uName, isAdmin);
+      updateCheckoutAuthState();
+      renderCart();
+
+      const nameInput = $('name');
+      if (nameInput && !nameInput.value) {
+        nameInput.value = localStorage.getItem('neolia_customer_name') || uName || '';
+      }
+    });
+  } catch (err) {
+    console.error('Erreur initAuthUI :', err);
+  }
 }
 
 initAuthUI();
@@ -635,7 +706,7 @@ LOGIN_HTML = r"""<!DOCTYPE html>
 <header class="top">
   <div class="wrap top-inner">
     <a class="logo" href="/">NÉOLIA<span class="logo-dot">.</span></a>
-    <nav><a href="/">Retour à la boutique</a></nav>
+    <nav id="login-nav"><a href="/">Retour à la boutique</a></nav>
   </div>
 </header>
 
@@ -657,7 +728,8 @@ LOGIN_HTML = r"""<!DOCTYPE html>
         <label for="login-password">Mot de passe</label>
         <input id="login-password" type="password" autocomplete="current-password" required>
 
-        <button type="submit">Se connecter</button>
+        <button type="submit" id="login-button">Se connecter</button>
+        <p class="err" id="login-err" role="alert" style="display:none;"></p>
         <p class="status" id="login-status" role="status"></p>
       </form>
     </section>
@@ -681,7 +753,8 @@ LOGIN_HTML = r"""<!DOCTYPE html>
         <input id="register-password" type="password"
                autocomplete="new-password" minlength="8" required>
 
-        <button type="submit">Créer mon compte</button>
+        <button type="submit" id="register-button">Créer mon compte</button>
+        <p class="err" id="register-err" role="alert" style="display:none;"></p>
         <p class="status" id="register-status" role="status"></p>
       </form>
 
@@ -690,9 +763,13 @@ LOGIN_HTML = r"""<!DOCTYPE html>
         <p class="status">
           Saisissez le code reçu par e-mail pour activer votre compte.
         </p>
-        <label for="confirm-code">Code de confirmation</label>
-        <input id="confirm-code" autocomplete="one-time-code">
-        <button id="confirm-button" type="button">Confirmer mon compte</button>
+        <label for="confirm-code">Code de confirmation (6 chiffres)</label>
+        <input id="confirm-code" autocomplete="one-time-code" placeholder="123456">
+        <div style="display:flex; gap:.6rem; margin-top:.75rem;">
+          <button id="confirm-button" type="button" style="flex:1;">Confirmer mon compte</button>
+          <button id="resend-button" type="button" class="ghost" style="flex:1;">Renvoyer le code</button>
+        </div>
+        <p class="err" id="confirm-err" role="alert" style="display:none;"></p>
         <p class="status" id="confirm-status" role="status"></p>
       </div>
     </section>
@@ -705,48 +782,139 @@ LOGIN_HTML = r"""<!DOCTYPE html>
   const CFG = window.APP_CONFIG || {};
   const params = new URLSearchParams(window.location.search);
   const next = params.get('next');
+  let pendingEmail = '';
+
   const pool = new AmazonCognitoIdentity.CognitoUserPool({
     UserPoolId: CFG.userPoolId,
     ClientId: CFG.userPoolClientId
   });
 
-  const currentUser = pool.getCurrentUser();
+  function translateCognitoError(error) {
+    if (!error) return "Une erreur inconnue est survenue.";
+    const code = error.code || error.name || "";
+    const msg = error.message || String(error);
 
-if (currentUser) {
-  currentUser.getSession((error, session) => {
-    if (!error && session && session.isValid()) {
-      sessionStorage.setItem(
-        'jwt_token',
-        session.getIdToken().getJwtToken()
-      );
-      sessionStorage.setItem(
-        'user_email',
-        currentUser.getUsername()
-      );
-
-      const destination = next === 'checkout'
-        ? '/?next=checkout#panier'
-        : '/account';
-
-      window.location.replace(destination);
+    if (code === 'UsernameExistsException' || msg.includes('User already exists')) {
+      return "Un compte existe déjà avec cette adresse e-mail. Veuillez vous connecter ou réinitialiser votre mot de passe.";
     }
-  });
-}
-  let pendingEmail = '';
+    if (code === 'InvalidPasswordException' || msg.includes('Password did not conform')) {
+      return "Le mot de passe doit comporter au moins 8 caractères, dont au moins une majuscule, une minuscule et un chiffre.";
+    }
+    if (code === 'CodeMismatchException' || msg.includes('Invalid verification code')) {
+      return "Le code de confirmation est invalide. Veuillez vérifier vos e-mails et réessayer.";
+    }
+    if (code === 'ExpiredCodeException' || msg.includes('expired')) {
+      return "Le code de confirmation a expiré. Cliquez sur 'Renvoyer le code'.";
+    }
+    if (code === 'NotAuthorizedException' || msg.includes('Incorrect username or password')) {
+      return "Identifiants incorrects (adresse e-mail ou mot de passe erroné).";
+    }
+    if (code === 'UserNotFoundException') {
+      return "Aucun compte n'a été trouvé avec cette adresse e-mail.";
+    }
+    if (code === 'UserNotConfirmedException') {
+      return "Votre compte n'est pas encore confirmé. Saisissez le code reçu par e-mail ci-dessous.";
+    }
+    if (code === 'TooManyRequestsException' || code === 'LimitExceededException') {
+      return "Trop de tentatives. Veuillez patienter un instant avant de réessayer.";
+    }
+    return msg;
+  }
+
+  function setLoginErr(msg) {
+    const el = $('login-err');
+    if (el) { el.textContent = msg; el.style.display = msg ? 'block' : 'none'; }
+    if (msg) $('login-status').textContent = '';
+  }
+  function setRegisterErr(msg) {
+    const el = $('register-err');
+    if (el) { el.textContent = msg; el.style.display = msg ? 'block' : 'none'; }
+    if (msg) $('register-status').textContent = '';
+  }
+  function setConfirmErr(msg) {
+    const el = $('confirm-err');
+    if (el) { el.textContent = msg; el.style.display = msg ? 'block' : 'none'; }
+    if (msg) $('confirm-status').textContent = '';
+  }
+
+  const currentUser = pool.getCurrentUser();
+  if (currentUser) {
+    currentUser.getSession((error, session) => {
+      if (!error && session && session.isValid()) {
+        const idToken = session.getIdToken();
+        const token = idToken.getJwtToken();
+        const email = currentUser.getUsername();
+        let displayName = email;
+        let isAdmin = false;
+
+        try {
+          const payload = idToken.decodePayload();
+          if (payload) {
+            if (payload.name) displayName = payload.name;
+            else if (payload.given_name) displayName = (payload.given_name + ' ' + (payload.family_name || '')).trim();
+            const groups = payload['cognito:groups'] || [];
+            if (Array.isArray(groups) && groups.includes('admin')) {
+              isAdmin = true;
+            }
+          }
+        } catch (_) {}
+
+        displayName = displayName || localStorage.getItem('neolia_customer_name') || email;
+        sessionStorage.setItem('jwt_token', token);
+        sessionStorage.setItem('user_email', email);
+        sessionStorage.setItem('user_name', displayName);
+        sessionStorage.setItem('user_is_admin', isAdmin ? 'true' : 'false');
+
+        const destination = next === 'checkout'
+          ? '/?next=checkout#panier'
+          : (next === 'admin' ? '/admin' : '/account');
+
+        window.location.replace(destination);
+      }
+    });
+  }
 
   function afterLogin(result, email) {
-    sessionStorage.setItem('jwt_token', result.getIdToken().getJwtToken());
-    sessionStorage.setItem('user_email', email);
+    const idToken = result.getIdToken();
+    const token = idToken.getJwtToken();
+    let displayName = email;
+    let isAdmin = false;
 
-    const destination = next === 'checkout'
-      ? '/?next=checkout#panier'
-      : '/account';
+    try {
+      const payload = idToken.decodePayload();
+      if (payload) {
+        if (payload.name) displayName = payload.name;
+        else if (payload.given_name) displayName = (payload.given_name + ' ' + (payload.family_name || '')).trim();
+        const groups = payload['cognito:groups'] || [];
+        if (Array.isArray(groups) && groups.includes('admin')) {
+          isAdmin = true;
+        }
+      }
+    } catch (_) {}
+
+    displayName = displayName || localStorage.getItem('neolia_customer_name') || email;
+
+    sessionStorage.setItem('jwt_token', token);
+    sessionStorage.setItem('user_email', email);
+    sessionStorage.setItem('user_name', displayName);
+    sessionStorage.setItem('user_is_admin', isAdmin ? 'true' : 'false');
+    if (displayName) localStorage.setItem('neolia_customer_name', displayName);
+
+    let destination = '/account';
+    if (next === 'checkout') {
+      destination = '/?next=checkout#panier';
+    } else if (next === 'admin') {
+      destination = '/admin';
+    } else if (isAdmin && !next) {
+      destination = '/admin';
+    }
 
     window.location.href = destination;
   }
 
   $('login-form').addEventListener('submit', function (event) {
     event.preventDefault();
+    setLoginErr('');
 
     const email = $('login-email').value.trim();
     const password = $('login-password').value;
@@ -765,7 +933,14 @@ if (currentUser) {
       {
         onSuccess: result => afterLogin(result, email),
         onFailure: error => {
-          $('login-status').textContent = error.message;
+          const frMsg = translateCognitoError(error);
+          setLoginErr(frMsg);
+          if (error && (error.code === 'UserNotConfirmedException' || (error.message && error.message.includes('not confirmed')))) {
+            pendingEmail = email;
+            $('confirm-panel').hidden = false;
+            $('confirm-status').textContent = 'Votre compte n\'est pas encore confirmé. Saisissez le code reçu par e-mail.';
+            $('confirm-code').focus();
+          }
         }
       }
     );
@@ -773,62 +948,81 @@ if (currentUser) {
 
   $('register-form').addEventListener('submit', function (event) {
     event.preventDefault();
-
-    const prenom = $('register-prenom').value.trim();
-    const nom = $('register-nom').value.trim();
-    const fullName = `$${prenom} $${nom}`.trim();
-    const email = $('register-email').value.trim();
-    const address = $('register-address').value.trim();
-    const password = $('register-password').value;
-
-    $('register-status').textContent = 'Création du compte…';
-
-    const attributes = [
-      new AmazonCognitoIdentity.CognitoUserAttribute({ Name: 'email', Value: email }),
-      new AmazonCognitoIdentity.CognitoUserAttribute({ Name: 'name', Value: fullName }),
-      new AmazonCognitoIdentity.CognitoUserAttribute({ Name: 'given_name', Value: prenom }),
-      new AmazonCognitoIdentity.CognitoUserAttribute({ Name: 'family_name', Value: nom }),
-      new AmazonCognitoIdentity.CognitoUserAttribute({ Name: 'address', Value: address })
-    ];
-
-   pool.signUp(email, password, attributes, null, async (error, result) => {
-    if (error) {
-    $('register-status').textContent = error.message;
-    return;
-    }
-
-    pendingEmail = email;
-    localStorage.setItem('neolia_customer_name', fullName);
-   localStorage.setItem('neolia_customer_address', address);
-   $('login-email').value = email;
-
-    if (result && result.userConfirmed) {
-    $('confirm-panel').hidden = true;
-    $('register-status').textContent =
-      'Compte confirmé. Vous pouvez vous connecter.';
-    $('login-password').focus();
-    } else {
-    $('confirm-panel').hidden = false;
-    $('register-status').textContent =
-      'Compte créé. Saisissez le code reçu par e-mail.';
-    $('confirm-code').focus();
-    }
+    setRegisterErr('');
 
     try {
-    await fetch('/api/subscribe', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email })
-    });
-  } catch (_) {}
+      if (typeof AmazonCognitoIdentity === 'undefined') {
+        throw new Error("Le composant Cognito n'a pas pu être chargé. Veuillez vérifier votre connexion.");
+      }
+
+      const prenom = $('register-prenom').value.trim();
+      const nom = $('register-nom').value.trim();
+      const fullName = `$${prenom} $${nom}`.trim();
+      const email = $('register-email').value.trim();
+      const address = $('register-address').value.trim();
+      const password = $('register-password').value;
+
+      if (!prenom || !nom || !email || !password) {
+        setRegisterErr("Veuillez renseigner tous les champs obligatoires.");
+        return;
+      }
+
+      $('register-status').textContent = 'Création du compte et envoi du code par e-mail…';
+      const regBtn = $('register-button');
+      if (regBtn) regBtn.disabled = true;
+
+      const attributes = [
+        new AmazonCognitoIdentity.CognitoUserAttribute({ Name: 'email', Value: email }),
+        new AmazonCognitoIdentity.CognitoUserAttribute({ Name: 'name', Value: fullName }),
+        new AmazonCognitoIdentity.CognitoUserAttribute({ Name: 'given_name', Value: prenom }),
+        new AmazonCognitoIdentity.CognitoUserAttribute({ Name: 'family_name', Value: nom }),
+        new AmazonCognitoIdentity.CognitoUserAttribute({ Name: 'address', Value: address })
+      ];
+
+      pool.signUp(email, password, attributes, null, async (error, result) => {
+        if (regBtn) regBtn.disabled = false;
+
+        if (error) {
+          setRegisterErr(translateCognitoError(error));
+          return;
+        }
+
+        pendingEmail = email;
+        localStorage.setItem('neolia_customer_name', fullName);
+        localStorage.setItem('neolia_customer_address', address);
+        $('login-email').value = email;
+
+        if (result && result.userConfirmed) {
+          $('confirm-panel').hidden = true;
+          $('register-status').textContent = 'Compte confirmé ! Vous pouvez vous connecter.';
+          $('login-password').focus();
+        } else {
+          $('confirm-panel').hidden = false;
+          $('register-status').textContent = 'Compte créé ! Un e-mail contenant votre code de confirmation vient d\'être envoyé à ' + email + '.';
+          $('confirm-code').focus();
+        }
+
+        try {
+          await fetch('/api/subscribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email })
+          });
+        } catch (_) {}
+      });
+    } catch (err) {
+      const regBtn = $('register-button');
+      if (regBtn) regBtn.disabled = false;
+      setRegisterErr(err.message || String(err));
+    }
   });
 
   $('confirm-button').addEventListener('click', function () {
+    setConfirmErr('');
     const code = $('confirm-code').value.trim();
 
     if (!pendingEmail || !code) {
-      $('confirm-status').textContent =
-        'Saisissez le code reçu par e-mail.';
+      setConfirmErr('Veuillez saisir le code reçu par e-mail.');
       return;
     }
 
@@ -837,16 +1031,43 @@ if (currentUser) {
       Pool: pool
     });
 
+    $('confirm-status').textContent = 'Confirmation en cours…';
+
     user.confirmRegistration(code, true, error => {
       if (error) {
-        $('confirm-status').textContent = error.message;
+        setConfirmErr(translateCognitoError(error));
         return;
       }
 
       $('login-email').value = pendingEmail;
-      $('confirm-status').textContent =
-        'Compte confirmé. Connectez-vous maintenant.';
+      $('confirm-status').textContent = 'Compte confirmé avec succès ! Vous pouvez maintenant vous connecter.';
+      $('confirm-panel').hidden = true;
       $('login-password').focus();
+    });
+  });
+
+  $('resend-button').addEventListener('click', function () {
+    setConfirmErr('');
+    const email = pendingEmail || $('register-email').value.trim() || $('login-email').value.trim();
+
+    if (!email) {
+      setConfirmErr('Veuillez renseigner votre adresse e-mail.');
+      return;
+    }
+
+    const user = new AmazonCognitoIdentity.CognitoUser({
+      Username: email,
+      Pool: pool
+    });
+
+    $('confirm-status').textContent = 'Envoi d\'un nouveau code…';
+
+    user.resendConfirmationCode(function (error, result) {
+      if (error) {
+        setConfirmErr(translateCognitoError(error));
+      } else {
+        $('confirm-status').textContent = 'Un nouveau code de confirmation a été envoyé à ' + email + '.';
+      }
     });
   });
 })();
@@ -868,10 +1089,12 @@ ACCOUNT_HTML = r"""<!DOCTYPE html>
 <header class="top">
   <div class="wrap top-inner">
     <a class="logo" href="/">NÉOLIA<span class="logo-dot">.</span></a>
-    <nav>
+    <nav id="account-nav">
       <a href="/">Boutique</a>
       <a href="#profile">Mon profil</a>
-      <a href="#panier" onclick="return goToCart(event)">Mon panier</a>
+      <a href="#orders-section">Mes commandes</a>
+      <span class="nav-user-badge"><span class="nav-user-icon">👤</span> <strong class="nav-user-name" id="account-nav-name">Mon compte</strong></span>
+      <a href="#" id="top-logout">Déconnexion</a>
     </nav>
   </div>
 </header>
@@ -932,6 +1155,21 @@ ACCOUNT_HTML = r"""<!DOCTYPE html>
   return;
   }
 
+  let displayName = sessionStorage.getItem('user_name') || localStorage.getItem('neolia_customer_name') || email;
+  const navNameEl = $('account-nav-name');
+  if (navNameEl) navNameEl.textContent = displayName;
+
+  const isAdminStored = sessionStorage.getItem('user_is_admin') === 'true';
+  if (isAdminStored && $('account-nav') && !$('account-nav-admin')) {
+    const adminLink = document.createElement('a');
+    adminLink.id = 'account-nav-admin';
+    adminLink.className = 'nav-admin-badge';
+    adminLink.href = '/admin';
+    adminLink.textContent = '👑 Administration';
+    const navUserEl = navNameEl.closest('.nav-user-badge');
+    $('account-nav').insertBefore(adminLink, navUserEl);
+  }
+
   const pool = new AmazonCognitoIdentity.CognitoUserPool({
     UserPoolId: CFG.userPoolId,
     ClientId: CFG.userPoolClientId
@@ -952,9 +1190,30 @@ ACCOUNT_HTML = r"""<!DOCTYPE html>
     if (error || !session || !session.isValid()) {
       sessionStorage.removeItem('jwt_token');
       sessionStorage.removeItem('user_email');
+      sessionStorage.removeItem('user_name');
+      sessionStorage.removeItem('user_is_admin');
       window.location.replace('/login?next=account');
       return;
     }
+
+    try {
+      const payload = session.getIdToken().decodePayload();
+      if (payload) {
+        const groups = payload['cognito:groups'] || [];
+        if (Array.isArray(groups) && groups.includes('admin')) {
+          sessionStorage.setItem('user_is_admin', 'true');
+          if ($('account-nav') && !$('account-nav-admin')) {
+            const adminLink = document.createElement('a');
+            adminLink.id = 'account-nav-admin';
+            adminLink.className = 'nav-admin-badge';
+            adminLink.href = '/admin';
+            adminLink.textContent = '👑 Administration';
+            const navUserEl = $('account-nav-name').closest('.nav-user-badge');
+            $('account-nav').insertBefore(adminLink, navUserEl);
+          }
+        }
+      }
+    } catch (_) {}
 
     user.getUserAttributes((attributeError, attributes) => {
       if (attributeError) {
@@ -975,7 +1234,10 @@ ACCOUNT_HTML = r"""<!DOCTYPE html>
 
       const fullName = (availableAttributes.given_name ? (availableAttributes.given_name + ' ' + (availableAttributes.family_name || '')) : availableAttributes.name) || '';
       if (fullName) {
-        localStorage.setItem('neolia_customer_name', fullName.trim());
+        const cleanName = fullName.trim();
+        localStorage.setItem('neolia_customer_name', cleanName);
+        sessionStorage.setItem('user_name', cleanName);
+        if ($('account-nav-name')) $('account-nav-name').textContent = cleanName;
       }
     });
   });
@@ -1021,14 +1283,18 @@ ACCOUNT_HTML = r"""<!DOCTYPE html>
     });
   });
 
-  $('logout').addEventListener('click', () => {
-    user.signOut();
+  function doSignOut() {
+    if (user) user.signOut();
     sessionStorage.removeItem('jwt_token');
     sessionStorage.removeItem('user_email');
-
-    // Ne pas vider neolia_cart : le panier reste présent après déconnexion.
+    sessionStorage.removeItem('user_name');
+    sessionStorage.removeItem('user_is_admin');
     window.location.href = '/login';
-  });
+  }
+
+  $('logout').addEventListener('click', doSignOut);
+  const topLogoutBtn = $('top-logout');
+  if (topLogoutBtn) topLogoutBtn.addEventListener('click', e => { e.preventDefault(); doSignOut(); });
 
   const eur = v => Number(v || 0).toLocaleString('fr-FR', {style:'currency', currency:'EUR'});
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -1090,16 +1356,35 @@ ADMIN_HTML = r"""<!DOCTYPE html>
 <title>NÉOLIA — Administration</title>
 <link rel="stylesheet" href="/style.css">
 <script src="/config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/amazon-cognito-identity-js@6.3.6/dist/amazon-cognito-identity.min.js"></script>
 </head>
 <body>
 <header class="top">
   <div class="wrap top-inner">
     <a class="logo" href="/">NÉOLIA<span class="logo-dot">.</span> <span class="admin-mark">ADMIN</span></a>
-    <nav><a href="/">Voir la boutique</a></nav>
+    <nav id="admin-nav"><a href="/">Voir la boutique</a></nav>
   </div>
 </header>
 
-<main class="wrap admin-main">
+<div id="admin-gate-loading" style="text-align:center; padding:5rem 1.5rem;">
+  <p class="status">Vérification de vos droits d'accès administrateur en cours…</p>
+</div>
+
+<div id="admin-gate-denied" class="wrap" hidden style="max-width:540px; margin:4rem auto; text-align:center;">
+  <div class="auth-card" style="padding:2.5rem 2rem; box-shadow:0 12px 35px #25213b10;">
+    <div style="font-size:3.5rem; margin-bottom:1rem;">⛔</div>
+    <h2 style="margin-bottom:.75rem; color:var(--ink);">Accès Administrateur Restreint</h2>
+    <p id="denied-reason" style="margin-bottom:1.5rem; color:var(--muted); font-size:.95rem; line-height:1.6;">
+      Cette page est strictement réservée aux utilisateurs connectés et appartenant au groupe Cognito <code>admin</code>.
+    </p>
+    <div style="display:flex; gap:.75rem; justify-content:center; flex-wrap:wrap;">
+      <a href="/" class="cta" style="text-decoration:none;">Retourner à la boutique</a>
+      <a href="/login?next=admin" id="btn-login-admin" class="ghost" style="display:inline-flex; align-items:center; text-decoration:none; padding:.75rem 1.25rem; border-radius:999px;">Se connecter</a>
+    </div>
+  </div>
+</div>
+
+<main class="wrap admin-main" id="admin-dashboard" hidden>
   <div class="section-head">
     <div><p class="section-kicker">Pilotage</p><h1>Tableau de bord</h1></div>
     <button type="button" class="ghost" id="refresh">Actualiser</button>
@@ -1149,14 +1434,141 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({
   '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'
 }[c]));
 
+let adminUserToken = '';
+let adminUserEmail = '';
+
 function notify(message) {
   $('toast').textContent = message;
   $('toast').classList.add('visible');
   window.setTimeout(() => $('toast').classList.remove('visible'), 4500);
 }
 
+function logoutAndRedirect() {
+  try {
+    if (typeof AmazonCognitoIdentity !== 'undefined' && CFG.userPoolId && CFG.userPoolClientId) {
+      const p = new AmazonCognitoIdentity.CognitoUserPool({
+        UserPoolId: CFG.userPoolId,
+        ClientId: CFG.userPoolClientId
+      });
+      const cu = p.getCurrentUser();
+      if (cu) cu.signOut();
+    }
+  } catch (_) {}
+  sessionStorage.removeItem('jwt_token');
+  sessionStorage.removeItem('user_email');
+  sessionStorage.removeItem('user_name');
+  sessionStorage.removeItem('user_is_admin');
+  window.location.replace('/login?next=admin');
+}
+
+async function verifyAdminAccess() {
+  const token = sessionStorage.getItem('jwt_token');
+  const email = sessionStorage.getItem('user_email');
+  let displayName = sessionStorage.getItem('user_name') || email;
+
+  function showDenied(htmlReason, isNotLoggedIn) {
+    $('admin-gate-loading').hidden = true;
+    $('admin-dashboard').hidden = true;
+    $('admin-gate-denied').hidden = false;
+    $('denied-reason').innerHTML = htmlReason;
+    const btn = $('btn-login-admin');
+    if (btn) {
+      if (isNotLoggedIn) {
+        btn.textContent = 'Se connecter';
+        btn.href = '/login?next=admin';
+        btn.onclick = null;
+      } else {
+        btn.textContent = 'Changer de compte';
+        btn.href = '#';
+        btn.onclick = (e) => {
+          e.preventDefault();
+          logoutAndRedirect();
+        };
+      }
+    }
+  }
+
+  if (!token || !email) {
+    showDenied("Vous n'êtes pas connecté. Vous devez vous identifier avec un compte membre du groupe Cognito <code>admin</code>.", true);
+    return false;
+  }
+
+  let isAdmin = false;
+  if (window.parseJwt) {
+    try {
+      const payload = window.parseJwt(token);
+      if (payload) {
+        if (payload.name) displayName = payload.name;
+        else if (payload.given_name) displayName = (payload.given_name + ' ' + (payload.family_name || '')).trim();
+        const groups = payload['cognito:groups'] || [];
+        if (Array.isArray(groups) && groups.includes('admin')) {
+          isAdmin = true;
+        }
+      }
+    } catch (_) {}
+  }
+
+  try {
+    const res = await fetch('/api/admin/check?email=' + encodeURIComponent(email), {
+      headers: { 'Authorization': 'Bearer ' + token },
+      cache: 'no-store'
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.status === 'SUCCESS') {
+        isAdmin = !!data.is_admin;
+      }
+    }
+  } catch (e) {
+    console.warn('Vérification serveur admin :', e);
+  }
+
+  displayName = displayName || email;
+
+  if (!isAdmin) {
+    showDenied("Le compte <strong>" + esc(displayName) + "</strong> (" + esc(email) + ") est connecté mais n'appartient pas au groupe Cognito <code>admin</code>.", false);
+    return false;
+  }
+
+  adminUserEmail = email;
+  adminUserToken = token;
+  sessionStorage.setItem('user_name', displayName);
+  sessionStorage.setItem('user_is_admin', 'true');
+
+  $('admin-gate-loading').hidden = true;
+  $('admin-gate-denied').hidden = true;
+  $('admin-dashboard').hidden = false;
+
+  const nav = $('admin-nav');
+  if (nav) {
+    nav.innerHTML =
+      '<span class="nav-user-badge nav-admin-badge" title="Connecté en tant qu\'administrateur">' +
+      '<span class="nav-user-icon">👑</span> <strong class="nav-user-name">' + esc(displayName) + '</strong> <small>(Admin)</small></span> ' +
+      '<a href="/">Voir la boutique</a> ' +
+      '<a href="#" id="admin-logout">Déconnexion</a>';
+
+    const logoutBtn = $('admin-logout');
+    if (logoutBtn) {
+      logoutBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        logoutAndRedirect();
+      });
+    }
+  }
+
+  return true;
+}
+
 async function load() {
-  const response = await fetch('/api/orders', {cache:'no-store'});
+  const headers = {};
+  if (adminUserToken) {
+    headers['Authorization'] = 'Bearer ' + adminUserToken;
+  }
+
+  const response = await fetch('/api/orders', { headers, cache: 'no-store' });
+  if (response.status === 403) {
+    throw new Error('Accès interdit : privilèges administrateur requis.');
+  }
   if (!response.ok) throw new Error('Impossible de charger les commandes.');
 
   const orders = await response.json();
@@ -1194,7 +1606,11 @@ async function load() {
 }
 
 async function loadSpot() {
-  const response = await fetch('/api/spot-status', {cache:'no-store'});
+  const headers = {};
+  if (adminUserToken) {
+    headers['Authorization'] = 'Bearer ' + adminUserToken;
+  }
+  const response = await fetch('/api/spot-status', { headers, cache: 'no-store' });
   if (!response.ok) throw new Error('Impossible de lire le statut Spot.');
 
   const data = await response.json();
@@ -1206,51 +1622,58 @@ async function loadSpot() {
       : 'aucune instance active');
 }
 
-if (CFG.spot) {
-  $('spot').hidden = false;
+verifyAdminAccess().then(isAuthorized => {
+  if (!isAuthorized) return;
 
-  fetch('/api/info', {cache:'no-store'})
-    .then(response => response.json())
-    .then(data => {
-      $('infra').textContent =
-        'Serveur : ' + data.instance + ' — région ' + data.region +
-        ' — Launch Template ' + data.launch_template;
-    })
-    .catch(() => {});
-
-  $('spot-btn').addEventListener('click', async () => {
-    const button = $('spot-btn');
-    button.disabled = true;
-
-    try {
-      const response = await fetch('/api/launch-spot', {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:'{}'
-      });
-      const data = await response.json();
-
-      if (!response.ok || data.error) throw new Error(data.error || 'Échec du lancement.');
-
-      notify('Instance ' + data.instance_id + ' lancée (' + data.mode + ').');
-      await loadSpot();
-    } catch (error) {
-      notify(error.message);
-    } finally {
-      button.disabled = false;
-    }
-  });
-
-  loadSpot().catch(error => notify(error.message));
-  window.setInterval(() => loadSpot().catch(() => {}), 5000);
-}
-
-$('refresh').addEventListener('click', () => {
   load().catch(error => notify(error.message));
-});
+  window.setInterval(() => load().catch(() => {}), 10000);
 
-load().catch(error => notify(error.message));
-window.setInterval(() => load().catch(() => {}), 10000);
+  if (CFG.spot) {
+    $('spot').hidden = false;
+
+    fetch('/api/info', {cache:'no-store'})
+      .then(response => response.json())
+      .then(data => {
+        $('infra').textContent =
+          'Serveur : ' + data.instance + ' — région ' + data.region +
+          ' — Launch Template ' + data.launch_template;
+      })
+      .catch(() => {});
+
+    $('spot-btn').addEventListener('click', async () => {
+      const button = $('spot-btn');
+      button.disabled = true;
+
+      try {
+        const response = await fetch('/api/launch-spot', {
+          method:'POST',
+          headers:{
+            'Content-Type':'application/json',
+            'Authorization':'Bearer ' + adminUserToken
+          },
+          body:'{}'
+        });
+        const data = await response.json();
+
+        if (!response.ok || data.error) throw new Error(data.error || 'Échec du lancement.');
+
+        notify('Instance ' + data.instance_id + ' lancée (' + data.mode + ').');
+        await loadSpot();
+      } catch (error) {
+        notify(error.message);
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    loadSpot().catch(error => notify(error.message));
+    window.setInterval(() => loadSpot().catch(() => {}), 5000);
+  }
+
+  $('refresh').addEventListener('click', () => {
+    load().catch(error => notify(error.message));
+  });
+});
 </script>
 </body>
 </html>
@@ -1405,7 +1828,30 @@ nav a:hover { color:var(--pink); }
 .account-actions,.cart-actions { display:flex; gap:.5rem; margin-top:.65rem; }
 .account-actions button,.cart-actions button { flex:1; padding:.68rem .55rem; font-size:.81rem; }
 .status,.fine-print,.empty { color:var(--muted); font-size:.83rem; margin-top:.6rem; overflow-wrap:anywhere; }
-.err { color:var(--red); font-size:.85rem; margin-top:.5rem; min-height:1.2em; }
+.err { color:var(--red); font-size:.88rem; margin-top:.5rem; min-height:1.2em; font-weight:600; line-height:1.4; }
+.nav-user-badge {
+  display:inline-flex; align-items:center; gap:.45rem;
+  background:#fff; border:1px solid var(--line);
+  padding:.35rem .85rem; border-radius:999px;
+  font-size:.86rem; font-weight:700; color:var(--ink);
+  box-shadow:0 2px 8px #25213b0a;
+  text-decoration:none;
+  transition:all .2s;
+}
+.nav-user-badge:hover {
+  border-color:var(--purple); color:var(--purple);
+}
+.nav-user-badge .nav-user-icon { font-size:1.05rem; line-height:1; }
+.nav-user-badge .nav-user-name {
+  max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.nav-admin-badge {
+  background:#FFF3D6 !important; border-color:#FFD166 !important; color:#7A4F00 !important;
+  font-weight:800;
+}
+.nav-admin-badge:hover {
+  background:#FFE7A5 !important; border-color:#FFC857 !important; color:#523300 !important;
+}
 .fine-print { margin-top:1rem; line-height:1.5; }
 footer { border-top:1px solid var(--line); padding:1.5rem 0; }
 .footer-inner { display:flex; justify-content:space-between; align-items:center; gap:1rem; color:var(--muted); font-size:.85rem; }
@@ -1706,6 +2152,33 @@ class ShopHandler(BaseHTTPRequestHandler):
         except Exception as exc:
             return 500, {"error": f"Erreur lors de l'appel Lambda : {str(exc)}"}
 
+    def _is_admin(self):
+        """Vérifie si la requête appelante possède les droits administrateur (groupe Cognito admin)."""
+        auth_header = self.headers.get("Authorization", "")
+        token = ""
+        if auth_header.startswith("Bearer "):
+            token = auth_header.split(" ", 1)[1].strip()
+
+        parsed = urllib.parse.urlparse(self.path)
+        query = urllib.parse.parse_qs(parsed.query)
+        email = query.get("email", [""])[0]
+
+        if not token and not email:
+            return False
+
+        try:
+            code, res = self._invoke_lambda({
+                "action": "admin_check",
+                "email": email,
+                "access_token": token,
+                "headers": dict(self.headers),
+            })
+            if code == 200 and isinstance(res, dict) and res.get("is_admin") is True:
+                return True
+        except Exception:
+            pass
+        return False
+
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
@@ -1839,6 +2312,11 @@ class ShopHandler(BaseHTTPRequestHandler):
             # 7. Compte utilisateur : Commandes & statut
             if path in ["/api/user/orders", "/api/orders"]:
                 email = query.get("email", [""])[0] or query.get("customer_email", [""])[0]
+                # Si aucune adresse email n'est précisée, c'est une consultation globale réservée à l'administrateur
+                if not email and not self._is_admin():
+                    self._send_json(403, {"status": "ERROR", "statusCode": 403, "error": "Accès réservé aux administrateurs."})
+                    return
+
                 code, res = self._invoke_lambda({
                     "action": "get_user_orders",
                     "customer_email": email,
@@ -1872,18 +2350,27 @@ class ShopHandler(BaseHTTPRequestHandler):
 
             # 10. Admin : Vision des stocks & métriques
             if path == "/api/admin/stocks":
+                if not self._is_admin():
+                    self._send_json(403, {"status": "ERROR", "statusCode": 403, "error": "Accès réservé aux administrateurs."})
+                    return
                 code, res = self._invoke_lambda({"action": "admin_list_stocks"})
                 self._send_json(code, res)
                 return
 
             # 11. Admin : Liste des membres du groupe admin
             if path == "/api/admin/admins":
+                if not self._is_admin():
+                    self._send_json(403, {"status": "ERROR", "statusCode": 403, "error": "Accès réservé aux administrateurs."})
+                    return
                 code, res = self._invoke_lambda({"action": "admin_list_admins"})
                 self._send_json(code, res)
                 return
 
             # 12. Admin : Liste de tous les utilisateurs Cognito
             if path == "/api/admin/users":
+                if not self._is_admin():
+                    self._send_json(403, {"status": "ERROR", "statusCode": 403, "error": "Accès réservé aux administrateurs."})
+                    return
                 code, res = self._invoke_lambda({"action": "admin_list_users"})
                 self._send_json(code, res)
                 return
@@ -1949,6 +2436,15 @@ class ShopHandler(BaseHTTPRequestHandler):
                 self._send_json(code, res)
                 return
 
+            # 3 bis. Renvoi du code de confirmation par e-mail
+            if path in ["/api/auth/resend-code", "/api/auth/resend"]:
+                code, res = self._invoke_lambda({
+                    "action": "resend_confirmation_code",
+                    **body,
+                })
+                self._send_json(code, res)
+                return
+
             # 4. Abonnement SNS direct (conservé pour rétrocompatibilité)
             if path == "/api/subscribe":
                 email = str(body.get("email", "")).strip()
@@ -1968,8 +2464,12 @@ class ShopHandler(BaseHTTPRequestHandler):
                 })
                 return
 
-            # 5. Démarrage Worker Spot manuel
+            # 5. Démarrage Worker Spot manuel (réservé aux administrateurs)
             if path == "/api/launch-spot":
+                if not self._is_admin():
+                    self._send_json(403, {"status": "ERROR", "statusCode": 403, "error": "Accès réservé aux administrateurs."})
+                    return
+
                 ec2 = boto3.client("ec2", region_name=REGION)
                 instance_id = None
                 mode = "EC2 Spot"
