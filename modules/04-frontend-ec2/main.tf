@@ -387,3 +387,9 @@ resource "aws_lb_listener_rule" "require_cloudfront_header" {
     }
   }
 }
+
+# Attach de la politique SSM au rôle EC2
+resource "aws_iam_role_policy_attachment" "front_ec2_ssm" {
+  role       = aws_iam_role.front_ec2_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
