@@ -84,6 +84,21 @@ resource "aws_iam_role_policy" "front_ec2_policy" {
         Effect   = "Allow"
         Action   = ["iam:PassRole"]
         Resource = [var.spot_worker_role_arn]
+      },
+      {
+        Effect   = "Allow"
+        Action   = [
+          "cognito-idp:AdminAddUserToGroup",
+          "cognito-idp:AdminRemoveUserFromGroup",
+          "cognito-idp:AdminListGroupsForUser",
+          "cognito-idp:ListUsersInGroup",
+          "cognito-idp:ListUsers",
+          "cognito-idp:AdminGetUser",
+          "cognito-idp:AdminUpdateUserAttributes",
+          "cognito-idp:SignUp",
+          "cognito-idp:GetUser"
+        ]
+        Resource = "*"
       }
     ]
   })

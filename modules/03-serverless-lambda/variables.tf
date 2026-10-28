@@ -33,3 +33,18 @@ variable "orders_batch_queue_url" {
 variable "orders_batch_queue_arn" {
   type = string
 }
+
+variable "user_pool_id" {
+  type    = string
+  default = ""
+}
+
+variable "user_pool_client_id" {
+  type    = string
+  default = ""
+}
+
+variable "user_pool_arn" {
+  type    = string
+  default = ""
+}

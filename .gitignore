@@ -4,3 +4,5 @@
 *.tfvars
 .terraform.lock.hcl
 modules/03-serverless-lambda/src/*.zip
+__pycache__/
+*.pyc
