@@ -100,12 +100,13 @@ SHOP_HTML = r"""<!DOCTYPE html>
 <header class="top">
   <div class="wrap top-inner">
     <a class="logo" href="/">NÉOLIA<span class="logo-dot">.</span></a>
-    <nav>
-      <a href="#collection">Collection</a>
-      <a href="#account">Mon compte</a>
-      <a href="#panier">Panier (<span id="count">0</span>)</a>
-      <a href="/admin">Administration</a>
-    </nav>
+      <nav>
+        <a href="#collection">Collection</a>
+       <a href="/login">Connexion</a>
+        <a href="/account">Mon compte</a>
+        <a href="#panier">Panier (<span id="count">0</span>)</a>
+       <a href="/admin">Administration</a>
+      </nav>
   </div>
 </header>
 
@@ -169,16 +170,12 @@ SHOP_HTML = r"""<!DOCTYPE html>
     <div id="lines"></div>
     <div class="total"><span>Total estimé</span><strong id="total">0,00 €</strong></div>
 
-    <section id="account" class="account">
-      <label for="a-email">E-mail du compte</label>
-      <input id="a-email" type="email" placeholder="vous@exemple.fr" autocomplete="username">
-      <label for="a-pass">Mot de passe</label>
-      <input id="a-pass" type="password" placeholder="Mot de passe" autocomplete="current-password">
-      <div class="account-actions">
-        <button class="ghost" type="button" id="a-reg">Créer un compte</button>
-        <button class="ghost" type="button" id="a-log">Connexion</button>
-      </div>
-      <p class="status" id="a-status">Connectez-vous pour commander.</p>
+    <section class="account-prompt">
+      <p id="auth-status">
+        Vous pouvez remplir votre panier sans compte.
+        Connectez-vous au moment de commander.
+      </p>
+      <a href="/login?next=checkout">Connexion ou création de compte →</a>
     </section>
 
     <label for="name">Nom du client</label>
@@ -422,115 +419,44 @@ $('clear').addEventListener('click', () => {
   saveCart();
 });
 
-function updateAuthUI() {
+function updateCheckoutAuthState() {
+  const status = document.getElementById('auth-status');
+  if (!status) return;
+
   if (token && authEmail) {
-    $('a-status').textContent = 'Connecté : ' + authEmail;
-    $('a-email').value = authEmail;
-    $('a-email').readOnly = true;
+    status.textContent = 'Connecté avec ' + authEmail + '. Votre panier est conservé.';
+  } else {
+    status.textContent =
+      'Vous pouvez remplir votre panier sans compte. Connectez-vous au moment de commander.';
   }
 }
 
-if (CFG.auth && typeof AmazonCognitoIdentity !== 'undefined') {
-  pool = new AmazonCognitoIdentity.CognitoUserPool({
-    UserPoolId: CFG.userPoolId,
-    ClientId: CFG.userPoolClientId
-  });
+updateCheckoutAuthState();
 
-  updateAuthUI();
-
-  $('a-reg').addEventListener('click', () => {
-    const email = $('a-email').value.trim();
-    const password = $('a-pass').value;
-
-    if (!email || !password) {
-      $('a-status').textContent = 'Saisissez un e-mail et un mot de passe.';
-      return;
-    }
-
-    const attributes = [
-      new AmazonCognitoIdentity.CognitoUserAttribute({
-        Name: 'email', Value: email
-      })
-    ];
-
-    pool.signUp(email, password, attributes, null, async error => {
-      if (error) {
-        $('a-status').textContent = error.message;
-        return;
-      }
-
-      try {
-        await fetch('/api/subscribe', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({email})
-        });
-      } catch (_) {}
-
-      $('a-status').textContent =
-        'Compte créé. Vérifiez votre e-mail pour confirmer votre inscription.';
-    });
-  });
-
-  $('a-log').addEventListener('click', () => {
-    const email = $('a-email').value.trim();
-    const password = $('a-pass').value;
-
-    if (!email || !password) {
-      $('a-status').textContent = 'Saisissez un e-mail et un mot de passe.';
-      return;
-    }
-
-    const user = new AmazonCognitoIdentity.CognitoUser({
-      Username: email,
-      Pool: pool
-    });
-
-    user.authenticateUser(
-      new AmazonCognitoIdentity.AuthenticationDetails({
-        Username: email,
-        Password: password
-      }),
-      {
-        onSuccess: result => {
-          token = result.getIdToken().getJwtToken();
-          authEmail = email;
-
-          sessionStorage.setItem('jwt_token', token);
-          sessionStorage.setItem('user_email', email);
-
-          updateAuthUI();
-          $('a-status').textContent = 'Connexion réussie : ' + email;
-          notify('Connexion réussie. Vous pouvez commander.');
-        },
-        onFailure: error => {
-          $('a-status').textContent = error.message;
-        }
-      }
-    );
-  });
-}
 
 $('order').addEventListener('click', async () => {
   $('err').textContent = '';
 
-  const name = $('name').value.trim();
-  const email = authEmail || '';
-
-  if (CFG.auth && !token) {
-    $('err').textContent = 'Connectez-vous à votre compte avant de commander.';
-    $('account').scrollIntoView({behavior: 'smooth'});
+  if (!token || !authEmail) {
+    window.location.href = '/login?next=checkout';
     return;
   }
 
-  if (!name || !email) {
-    $('err').textContent = 'Indiquez votre nom et connectez-vous avec votre compte client.';
+  const name = $('name').value.trim();
+  const email = authEmail;
+
+  if (!name) {
+    $('err').textContent = 'Indiquez votre nom pour finaliser la commande.';
+    $('name').focus();
     return;
   }
 
   const items = Object.entries(cart)
     .filter(([, quantity]) => Number(quantity) > 0)
-    .map(([product_id, qty]) => ({product_id, qty: Number(qty)}));
+    .map(([product_id, qty]) => ({
+      product_id,
+      qty: Number(qty)
+    }));
 
   if (!items.length) return;
 
@@ -579,15 +505,401 @@ $('t-close').addEventListener('click', () => {
 
 renderFilters();
 renderCart();
-loadProducts().catch(error => {
+$('name').value =
+  localStorage.getItem('neolia_customer_name') || '';
+
+loadProducts().then(() => {
+  const params = new URLSearchParams(window.location.search);
+
+  if (params.get('next') === 'checkout') {
+    $('panier').scrollIntoView({ behavior: 'smooth' });
+    notify('Connexion réussie. Votre panier est conservé : cliquez sur Commander pour terminer.');
+  }
+}).catch(error => {
   $('grid').textContent = error.message;
 });
 </script>
 </body>
 </html>
 """
+LOGIN_HTML = r"""<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NÉOLIA — Connexion</title>
+<link rel="stylesheet" href="/style.css">
+<script src="/config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/amazon-cognito-identity-js@6.3.6/dist/amazon-cognito-identity.min.js"></script>
+</head>
+<body>
+<header class="top">
+  <div class="wrap top-inner">
+    <a class="logo" href="/">NÉOLIA<span class="logo-dot">.</span></a>
+    <nav><a href="/">Retour à la boutique</a><a href="/account">Mon compte</a></nav>
+  </div>
+</header>
 
+<main class="wrap auth-main">
+  <p class="section-kicker">Votre espace client</p>
+  <h1>Bienvenue chez NÉOLIA.</h1>
+  <p class="auth-intro">
+    Connectez-vous pour commander ou créez votre compte.
+    Votre panier est conservé pendant cette étape.
+  </p>
 
+  <div class="auth-layout">
+    <section class="auth-card">
+      <h2>Connexion</h2>
+      <form id="login-form">
+        <label for="login-email">E-mail</label>
+        <input id="login-email" type="email" autocomplete="username" required>
+
+        <label for="login-password">Mot de passe</label>
+        <input id="login-password" type="password" autocomplete="current-password" required>
+
+        <button type="submit">Se connecter</button>
+        <p class="status" id="login-status" role="status"></p>
+      </form>
+    </section>
+
+    <section class="auth-card">
+      <h2>Créer un compte</h2>
+      <form id="register-form">
+        <label for="register-name">Nom complet</label>
+        <input id="register-name" type="text" autocomplete="name" required>
+
+        <label for="register-email">E-mail</label>
+        <input id="register-email" type="email" autocomplete="email" required>
+
+        <label for="register-password">Mot de passe</label>
+        <input id="register-password" type="password"
+               autocomplete="new-password" minlength="8" required>
+
+        <button type="submit">Créer mon compte</button>
+        <p class="status" id="register-status" role="status"></p>
+      </form>
+
+      <div id="confirm-panel" hidden>
+        <h3>Confirmer l'inscription</h3>
+        <p class="status">
+          Saisissez le code reçu par e-mail pour activer votre compte.
+        </p>
+        <label for="confirm-code">Code de confirmation</label>
+        <input id="confirm-code" autocomplete="one-time-code">
+        <button id="confirm-button" type="button">Confirmer mon compte</button>
+        <p class="status" id="confirm-status" role="status"></p>
+      </div>
+    </section>
+  </div>
+</main>
+
+<script>
+(function () {
+  const $ = id => document.getElementById(id);
+  const CFG = window.APP_CONFIG || {};
+  const params = new URLSearchParams(window.location.search);
+  const next = params.get('next');
+  const pool = new AmazonCognitoIdentity.CognitoUserPool({
+    UserPoolId: CFG.userPoolId,
+    ClientId: CFG.userPoolClientId
+  });
+
+  let pendingEmail = '';
+
+  function afterLogin(result, email) {
+    sessionStorage.setItem('jwt_token', result.getIdToken().getJwtToken());
+    sessionStorage.setItem('user_email', email);
+
+    const destination = next === 'checkout'
+      ? '/?next=checkout#panier'
+      : '/account';
+
+    window.location.href = destination;
+  }
+
+  $('login-form').addEventListener('submit', function (event) {
+    event.preventDefault();
+
+    const email = $('login-email').value.trim();
+    const password = $('login-password').value;
+    $('login-status').textContent = 'Connexion en cours…';
+
+    const user = new AmazonCognitoIdentity.CognitoUser({
+      Username: email,
+      Pool: pool
+    });
+
+    user.authenticateUser(
+      new AmazonCognitoIdentity.AuthenticationDetails({
+        Username: email,
+        Password: password
+      }),
+      {
+        onSuccess: result => afterLogin(result, email),
+        onFailure: error => {
+          $('login-status').textContent = error.message;
+        }
+      }
+    );
+  });
+
+  $('register-form').addEventListener('submit', function (event) {
+    event.preventDefault();
+
+    const name = $('register-name').value.trim();
+    const email = $('register-email').value.trim();
+    const password = $('register-password').value;
+
+    $('register-status').textContent = 'Création du compte…';
+
+    const attributes = [
+      new AmazonCognitoIdentity.CognitoUserAttribute({
+        Name: 'email',
+        Value: email
+      }),
+      new AmazonCognitoIdentity.CognitoUserAttribute({
+        Name: 'name',
+        Value: name
+      })
+    ];
+
+    pool.signUp(email, password, attributes, null, async error => {
+      if (error) {
+        $('register-status').textContent = error.message;
+        return;
+      }
+
+      pendingEmail = email;
+      localStorage.setItem('neolia_customer_name', name);
+      $('confirm-panel').hidden = false;
+      $('confirm-status').textContent =
+        'Vérifiez votre boîte e-mail et saisissez le code reçu.';
+
+      try {
+        await fetch('/api/subscribe', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({email})
+        });
+      } catch (_) {}
+    });
+  });
+
+  $('confirm-button').addEventListener('click', function () {
+    const code = $('confirm-code').value.trim();
+
+    if (!pendingEmail || !code) {
+      $('confirm-status').textContent =
+        'Saisissez le code reçu par e-mail.';
+      return;
+    }
+
+    const user = new AmazonCognitoIdentity.CognitoUser({
+      Username: pendingEmail,
+      Pool: pool
+    });
+
+    user.confirmRegistration(code, true, error => {
+      if (error) {
+        $('confirm-status').textContent = error.message;
+        return;
+      }
+
+      $('login-email').value = pendingEmail;
+      $('confirm-status').textContent =
+        'Compte confirmé. Connectez-vous maintenant.';
+      $('login-password').focus();
+    });
+  });
+})();
+</script>
+</body>
+</html>
+"""
+ACCOUNT_HTML = r"""<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NÉOLIA — Mon compte</title>
+<link rel="stylesheet" href="/style.css">
+<script src="/config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/amazon-cognito-identity-js@6.3.6/dist/amazon-cognito-identity.min.js"></script>
+</head>
+<body>
+<header class="top">
+  <div class="wrap top-inner">
+    <a class="logo" href="/">NÉOLIA<span class="logo-dot">.</span></a>
+    <nav>
+      <a href="/">Boutique</a>
+      <a href="#profile">Mon profil</a>
+      <a href="#panier" onclick="return goToCart(event)">Mon panier</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap auth-main">
+  <p class="section-kicker">Votre espace personnel</p>
+  <h1>Mon compte</h1>
+  <p class="auth-intro">
+    Consultez vos informations et mettez à jour votre profil.
+  </p>
+
+  <section class="auth-card profile-card" id="profile">
+    <h2>Mes informations</h2>
+    <form id="profile-form">
+      <label for="profile-email">Adresse e-mail du compte</label>
+      <input id="profile-email" type="email" readonly>
+
+      <label for="profile-name">Nom complet</label>
+      <input id="profile-name" type="text" autocomplete="name" required>
+
+      <label for="profile-phone">Téléphone</label>
+      <input id="profile-phone" type="tel" autocomplete="tel">
+
+      <button type="submit" id="save-profile">Enregistrer les modifications</button>
+      <p class="status" id="profile-status" role="status"></p>
+    </form>
+
+    <div class="profile-actions">
+      <a class="profile-link" href="/">Retour à la boutique</a>
+      <button type="button" class="ghost" id="logout">Se déconnecter</button>
+    </div>
+  </section>
+</main>
+
+<script>
+(function () {
+  const $ = id => document.getElementById(id);
+  const CFG = window.APP_CONFIG || {};
+  const email = sessionStorage.getItem('user_email');
+  const token = sessionStorage.getItem('jwt_token');
+
+  if (!email || !token) {
+    window.location.replace('/login?next=account');
+    return;
+  }
+
+  const pool = new AmazonCognitoIdentity.CognitoUserPool({
+    UserPoolId: CFG.userPoolId,
+    ClientId: CFG.userPoolClientId
+  });
+
+  const user = new AmazonCognitoIdentity.CognitoUser({
+    Username: email,
+    Pool: pool
+  });
+
+  let availableAttributes = {};
+
+  function showError(message) {
+    $('profile-status').textContent = message;
+  }
+
+  user.getSession((error, session) => {
+    if (error || !session || !session.isValid()) {
+      sessionStorage.removeItem('jwt_token');
+      sessionStorage.removeItem('user_email');
+      window.location.replace('/login?next=account');
+      return;
+    }
+
+    user.getUserAttributes((attributeError, attributes) => {
+      if (attributeError) {
+        showError(attributeError.message);
+        return;
+      }
+
+      availableAttributes = {};
+      (attributes || []).forEach(attribute => {
+        availableAttributes[attribute.getName()] = attribute.getValue();
+      });
+
+      $('profile-email').value = availableAttributes.email || email;
+      $('profile-name').value = availableAttributes.name || '';
+      $('profile-phone').value = availableAttributes.phone_number || '';
+
+      if (availableAttributes.name) {
+        localStorage.setItem(
+          'neolia_customer_name',
+          availableAttributes.name
+        );
+      }
+    });
+  });
+
+  $('profile-form').addEventListener('submit', event => {
+    event.preventDefault();
+
+    const name = $('profile-name').value.trim();
+    const phone = $('profile-phone').value.trim();
+
+    if (!name) {
+      showError('Le nom complet est obligatoire.');
+      return;
+    }
+
+    const attributes = [
+      new AmazonCognitoIdentity.CognitoUserAttribute({
+        Name: 'name',
+        Value: name
+      })
+    ];
+
+    if (phone) {
+      attributes.push(
+        new AmazonCognitoIdentity.CognitoUserAttribute({
+          Name: 'phone_number',
+          Value: phone
+        })
+      );
+    }
+
+    $('save-profile').disabled = true;
+    showError('Enregistrement en cours…');
+
+    user.updateAttributes(attributes, error => {
+      $('save-profile').disabled = false;
+
+      if (error) {
+        showError(
+          'Impossible de modifier le profil : ' + error.message +
+          '. Vérifiez que ces attributs sont modifiables dans Cognito.'
+        );
+        return;
+      }
+
+      localStorage.setItem('neolia_customer_name', name);
+      availableAttributes.name = name;
+
+      if (phone) {
+        availableAttributes.phone_number = phone;
+      }
+
+      showError('Vos informations ont bien été mises à jour.');
+    });
+  });
+
+  $('logout').addEventListener('click', () => {
+    user.signOut();
+    sessionStorage.removeItem('jwt_token');
+    sessionStorage.removeItem('user_email');
+
+    // Ne pas vider neolia_cart : le panier reste présent après déconnexion.
+    window.location.href = '/login';
+  });
+
+  window.goToCart = function (event) {
+    event.preventDefault();
+    window.location.href = '/#panier';
+    return false;
+  };
+})();
+</script>
+</body>
+</html>
+"""
 # ----------------------------------------------------------------------
 # ADMINISTRATION NÉOLIA
 # ----------------------------------------------------------------------
@@ -957,37 +1269,200 @@ td a { color:#6D4AE8; font-weight:700; }
 :focus-visible { outline:3px solid var(--purple); outline-offset:3px; }
 
 @media(max-width:900px) {
-  .main-layout { grid-template-columns:1fr; }
-  .cart { position:static; }
-  .hero-inner { grid-template-columns:1fr .8fr; gap:1rem; }
+  .main-layout {
+    grid-template-columns:1fr;
+  }
+
+  .cart {
+    position:static;
+  }
+
+  .hero-inner {
+    grid-template-columns:1fr .8fr;
+    gap:1rem;
+  }
 }
+
 @media(max-width:650px) {
-  .wrap { padding-left:1rem; padding-right:1rem; }
-  .top-inner { align-items:flex-start; flex-direction:column; }
-  nav { gap:.7rem; }
-  nav a { font-size:.82rem; }
-  .hero-inner { grid-template-columns:1fr; padding-top:3rem; padding-bottom:3rem; }
-  .hero h1 { font-size:2.8rem; }
-  .hero-art svg { max-height:245px; }
-  .main-layout { padding-top:2rem; }
-  .section-head { align-items:flex-start; flex-direction:column; }
-  .collection-note { display:none; }
-  .grid { grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); }
-  .footer-inner { flex-wrap:wrap; }
-  .panel { padding:.8rem; }
+  .wrap {
+    padding-left:1rem;
+    padding-right:1rem;
+  }
+
+  .top-inner {
+    align-items:flex-start;
+    flex-direction:column;
+  }
+
+  nav {
+    gap:.7rem;
+  }
+
+  nav a {
+    font-size:.82rem;
+  }
+
+  .hero-inner {
+    grid-template-columns:1fr;
+    padding-top:3rem;
+    padding-bottom:3rem;
+  }
+
+  .hero h1 {
+    font-size:2.8rem;
+  }
+
+  .hero-art svg {
+    max-height:245px;
+  }
+
+  .main-layout {
+    padding-top:2rem;
+  }
+
+  .section-head {
+    align-items:flex-start;
+    flex-direction:column;
+  }
+
+  .collection-note {
+    display:none;
+  }
+
+  .grid {
+    grid-template-columns:repeat(auto-fill,minmax(160px,1fr));
+  }
+
+  .footer-inner {
+    flex-wrap:wrap;
+  }
+
+  .panel {
+    padding:.8rem;
+  }
+}
+
+/* Pages Connexion, Inscription et Mon compte */
+.auth-main {
+  max-width:1040px;
+  padding-top:3rem;
+  padding-bottom:4rem;
+}
+
+.auth-main > h1 {
+  font-size:clamp(2.2rem,5vw,3.8rem);
+  line-height:1.1;
+}
+
+.auth-intro {
+  color:var(--muted);
+  max-width:620px;
+  margin:.9rem 0 2rem;
+}
+
+.auth-layout {
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:1.25rem;
+  align-items:start;
+}
+
+.auth-card {
+  min-width:0;
+  padding:1.5rem;
+  background:white;
+  border:1px solid var(--line);
+  border-radius:24px;
+  box-shadow:0 12px 32px #32234b08;
+}
+
+.auth-card h2 {
+  margin-bottom:1rem;
+}
+
+.auth-card form > button {
+  margin-top:1rem;
+}
+
+.auth-card input[readonly] {
+  color:var(--muted);
+  background:#FFF9F5;
+}
+
+.profile-card {
+  max-width:650px;
+}
+
+.account-prompt {
+  padding:1rem;
+  margin:1rem 0;
+  border-radius:16px;
+  background:#FFF9F5;
+  border:1px solid var(--line);
+  font-size:.86rem;
+}
+
+.account-prompt a,
+.profile-link {
+  display:inline-block;
+  margin-top:.55rem;
+  color:#6D4AE8;
+  font-weight:800;
+  text-decoration:none;
+}
+
+.profile-actions {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:1rem;
+  flex-wrap:wrap;
+  margin-top:1.5rem;
+  padding-top:1rem;
+  border-top:1px solid var(--line);
+}
+
+#confirm-panel {
+  margin-top:1.5rem;
+  padding-top:1rem;
+  border-top:1px solid var(--line);
+}
+
+@media(max-width:700px) {
+  .auth-layout {
+    grid-template-columns:1fr;
+  }
+
+  .auth-main {
+    padding-top:2rem;
+  }
+
+  .auth-card {
+    padding:1.1rem;
+  }
 }
 """
 
 
 PAGES = {
+    # Boutique
     "/": ("text/html; charset=utf-8", SHOP_HTML),
     "/index.html": ("text/html; charset=utf-8", SHOP_HTML),
+
+    # Authentification et profil client
+    "/login": ("text/html; charset=utf-8", LOGIN_HTML),
+    "/login/": ("text/html; charset=utf-8", LOGIN_HTML),
+    "/account": ("text/html; charset=utf-8", ACCOUNT_HTML),
+    "/account/": ("text/html; charset=utf-8", ACCOUNT_HTML),
+
+    # Administration
     "/admin": ("text/html; charset=utf-8", ADMIN_HTML),
     "/admin/": ("text/html; charset=utf-8", ADMIN_HTML),
+
+    # Fichiers statiques
     "/style.css": ("text/css; charset=utf-8", STYLE_CSS),
     "/config.js": ("application/javascript; charset=utf-8", CONFIG_JS),
 }
-
 
 # ----------------------------------------------------------------------
 # ROUTES HTTP / API AWS
