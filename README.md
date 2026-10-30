@@ -1,38 +1,38 @@
-# Projet Cloud AWS — Boutique E-Commerce Haute Disponibilité (FISA 2026)
+# Projet Cloud AWS — Boutique E-Commerce NÉOLIA (FISA 2026)
 
 > **Projet académique :** FISA 2026 / Infrastructures cloud et virtualisation  
 > **Enseignant :** Pr. Raouf Boulkroune  
-> **Auteur :** Bastien (`Bastien7d3`) | **Compte AWS :** `689505268069` | **Région :** `eu-west-3` (Paris)  
-> **Automatisation IaC :** Terraform
+> **Équipe projet :** Bastien BRUNEL, William PEREIRA, Lucas DEBRUYNE  
+> **Région cible :** `eu-west-3` (Paris)  
+> **Automatisation IaC :** Terraform (Multi-Module)
+
 ---
 
 ## 1. Sujet Officiel du Projet (Spécifications Client)
 
 ### Contexte & Spécifications
-Réaliser une boutique en ligne où les clients peuvent consulter un catalogue, passer des commandes et recevoir des notifications de confirmation en temps réel.  
-La plateforme doit être **évolutive, rentable et résiliente**. Elle sera construite à partir des services gérés par AWS dans le cadre de l'offre **Free Tier**.  
-Le système doit gérer l'interface utilisateur, les commandes et le traitement des commandes.  
-Le site doit être **hautement disponible**. Adapter votre solution pour **AWS Free Tier** en éliminant certaines fonctions pour maintenir le coût à zéro.
+Concevoir et déployer une plateforme e-commerce moderne pour la marque cosmétique **NÉOLIA**. Les clients peuvent consulter un catalogue dynamique, passer des commandes en temps réel et recevoir leurs notifications transactionnelles.  
+La plateforme doit être **hautement disponible, résiliente et optimisée FinOps**, tout en maintenant un coût d'exploitation proche de **0,00 €** en exploitant au maximum le **Free Tier d'AWS**.
 
 ### Exigences fonctionnelles
 * **Pour les clients :**
-  * Parcourir un catalogue de produits via une interface Web.
-  * Passer une commande pour un ou plusieurs produits.
-  * Recevoir un message de confirmation après avoir passé leur commande.
-* **Pour les systèmes internes de l'entreprise :**
-  * Enregistrer toutes les commandes à des fins d'audit et de reporting.
-  * Déclencher les opérations internes de traitement des commandes (emballage, simulation d'expédition avec numéro de suivi transporteur et facture PDF).
+  * Parcourir le catalogue cosmétique (Soins visage, corps, parfums).
+  * Passer une commande avec mise à jour immédiate des stocks.
+  * Recevoir un e-mail de confirmation instantané après l'achat.
+* **Pour les opérations internes (Back-Office) :**
+  * Traçabilité et persistance de toutes les commandes à des fins d'audit.
+  * Déclenchement du traitement par lot (simulation colisage carton S/M/L/XL, facture PDF officielle et numéro de suivi transporteur).
 
 ### Exigences architecturales
-* Utiliser **AWS Serverless** et **Compute EC2**.
-* Inclure des modèles événementiels (**SNS**) et aborder le streaming (**Kafka, MSK**).
-* Utiliser **Terraform** pour l'automatisation intégrale de l'infrastructure.
+* Architecture hybride combinant **IaaS (EC2)** et **Serverless (AWS Lambda)**.
+* Découplage événementiel asynchrone (**Amazon SNS & SQS**).
+* Déploiement 100 % automatisé via **Terraform**.
 
 ---
 
-## 2. Architecture du Projet (Hybride Free Tier à 0,00 €)
+## 2. Architecture Globale (Fusion IaaS & Serverless)
 
-L'architecture réunit l'élasticité IaaS (EC2 Front-End + Auto Scaling Group / ALB), la réactivité Serverless (AWS Lambda + DynamoDB pour la prise de commande synchrone) et l'économie du modèle Batch asynchrone (Worker EC2 Spot éphémère).
+L'architecture réunit l'élasticité IaaS (EC2 Front-End + Auto Scaling Group / ALB Multi-AZ), la réactivité Serverless (AWS Lambda + DynamoDB pour la prise de commande synchrone) et l'économie du modèle Batch asynchrone (Worker EC2 Spot éphémère).
 
 ```mermaid
 flowchart TB
@@ -85,86 +85,96 @@ flowchart TB
 
 ---
 
-## 3. Organisation Modulaire du Projet (Les 6 Modules)
+## 3. Organisation Modulaire du Projet
 
-Chaque partie de l'architecture possède son propre dossier dans [`modules/`](./modules/) avec son code Terraform et son **guide explicatif dédié** :
+Chaque brique de l'infrastructure est isolée dans un module réutilisable sous [`modules/`](./modules/) :
 
-| Dossier Module | Services AWS Gérés | Rôle & Connexions | Documentation Détaillée |
-| :--- | :--- | :--- | :--- |
-| **[`modules/00-auth-cognito/`](./modules/00-auth-cognito)** | **Amazon Cognito** (User Pool, App Client, Domaine) | Inscription et connexion sécurisée des clients par e-mail avec validation par lien d'activation (`CONFIRM_WITH_LINK`). | [EXPLICATIONS_AUTH_COGNITO.md](./modules/00-auth-cognito/EXPLICATIONS_AUTH_COGNITO.md) |
-| **[`modules/01-database-dynamodb/`](./modules/01-database-dynamodb)** | **DynamoDB** (`products`, `orders`) + **Amazon S3** (`invoices`) | Stocke le catalogue produits (pré-rempli), l'historique des commandes et les factures PDF. Configuré en mode `PROVISIONED` (5 RCU / 5 WCU = 100 % *Always Free*). | [EXPLICATIONS_DYNAMODB_S3.md](./modules/01-database-dynamodb/EXPLICATIONS_DYNAMODB_S3.md) |
-| **[`modules/02-messaging-sns-sqs/`](./modules/02-messaging-sns-sqs)** | **Amazon SNS** (2 Topics + `FilterPolicy`) + **Amazon SQS** (File batch) | Route les notifications e-mail vers le bon client via `FilterPolicy` (SNS) et conserve les commandes en attente jusqu'à 14 jours (SQS) en attendant le réveil du Worker EC2 Spot. | [EXPLICATIONS_SNS_SQS.md](./modules/02-messaging-sns-sqs/EXPLICATIONS_SNS_SQS.md) |
-| **[`modules/03-serverless-lambda/`](./modules/03-serverless-lambda)** | **AWS Lambda** (`create-order`) + **IAM** | Appelée par le Front-End EC2 lors d'un achat : décrémente le stock dans DynamoDB, crée la commande (`PENDING`), notifie SNS (`MessageAttributes`) et pousse dans SQS. | [EXPLICATIONS_LAMBDA.md](./modules/03-serverless-lambda/EXPLICATIONS_LAMBDA.md) |
-| **[`modules/04-frontend-ec2/`](./modules/04-frontend-ec2)** | **EC2 `t3.micro`** + **ALB** + **Auto Scaling** + **CloudFront** | Héberge l'interface web responsive, l'API d'authentification Cognito, la prise de commande Lambda, la console Admin Spot et le CDN Edge CloudFront. | [EXPLICATIONS_FRONTEND_EC2.md](./modules/04-frontend-ec2/EXPLICATIONS_FRONTEND_EC2.md) |
-| **[`modules/05-batch-ec2-spot/`](./modules/05-batch-ec2-spot)** | **Launch Template EC2 Spot** + **Planning Cron** + **FPDF2** | Aucune instance active au repos (`0,00 €/h`) : démarre périodiquement (02h00 UTC) ou sur clic Admin, vide la file SQS, calcule le carton (`S/M/L/XL`), génère le PDF sur S3, notifie SNS puis s'auto-détruit (`shutdown -h now` -> `terminated`). | [EXPLICATIONS_BATCH_SPOT.md](./modules/05-batch-ec2-spot/EXPLICATIONS_BATCH_SPOT.md) |
-
----
-
-## 4. Zoom Technique : Cycle de Vie du Worker EC2 Spot & Routage E-mail SNS
-
-### A. Exécution Périodique ou à la Demande du Worker EC2 Spot (`Scale-to-Zero`)
-* **Zéro instance au repos :** Le module `05-batch-ec2-spot` ne laisse **aucune instance EC2 Spot allumée en permanence**. Il déploie un `aws_launch_template` Spot (`market_type = "spot"`) couplé à un Auto Scaling Group dont la capacité par défaut est `desired_capacity = 0`.
-* **Deux modes de déclenchement :**
-  1. **Périodique (Automatique) :** Une règle `aws_autoscaling_schedule` réveille automatiquement une instance Spot toutes les nuits à `02h00 UTC` (`0 2 * * *`).
-  2. **À la demande (Manuel par l'Admin) :** Depuis le panneau d'administration du site web, le bouton **« Créer & Lancer une Instance EC2 Spot maintenant »** appelle `ec2.run_instances()` sur le Launch Template.
-* **Traitement et Auto-Destruction :** Dès son démarrage, l'instance EC2 Spot dépile tous les messages en attente dans SQS, calcule le colisage, génère les factures PDF dans S3 et met à jour DynamoDB. Dès que la file SQS est vide, le script Python exécute `shutdown -h now` : grâce à l'option `instance_initiated_shutdown_behavior = "terminate"`, **AWS détruit immédiatement l'instance et son volume EBS**.
-
-### B. Comment Amazon SNS sait-il à qui envoyer l'e-mail ? (`FilterPolicy` & `MessageAttributes`)
-* **Fonctionnement Pub/Sub d'Amazon SNS :** Contrairement à un serveur SMTP, Amazon SNS nécessite qu'une adresse e-mail soit abonnée au Topic (`sns:Subscribe`) et confirmée via le lien *Confirm subscription* envoyé par AWS (`no-reply@sns.amazonaws.com`).
-* **Ciblage individuel par client :** Pour que chaque client ne reçoive **que ses propres commandes** sur un Topic partagé :
-  1. Lorsqu'un client saisit son e-mail sur le Front-End et clique sur **« S'abonner aux notifications SNS »**, le serveur crée un abonnement SNS doté d'une **`FilterPolicy`** : `{"customer_email": ["client@domaine.fr"]}`.
-  2. Lorsque la **Lambda** (confirmation) ou le **Worker Spot** (expédition + lien PDF) publie dans SNS, il attache l'attribut `MessageAttributes = {"customer_email": {"DataType": "String", "StringValue": email_du_client}}`.
-  3. **Amazon SNS filtre automatiquement** le message et l'achemine uniquement vers la boîte mail du client concerné.
+| Dossier Module | Services AWS Gérés | Rôle & Spécificités d'Architecture |
+| :--- | :--- | :--- |
+| **[`modules/00-auth-cognito/`](./modules/00-auth-cognito)** | **Amazon Cognito** (User Pool, App Client, Groupes) | Inscription et connexion sécurisée des clients. Domaine unique par compte AWS pour éliminer tout risque de conflit inter-comptes. Gestion des privilèges RBAC (`admin`). |
+| **[`modules/01-database-dynamodb/`](./modules/01-database-dynamodb)** | **DynamoDB** (`products`, `orders`) + **Amazon S3** (`invoices`) | Catalogue produits pré-rempli, historique d'audit des commandes et archivage sécurisé des factures PDF. Tables configurées en mode `PROVISIONED` (100 % *Always Free*). |
+| **[`modules/02-messaging-sns-sqs/`](./modules/02-messaging-sns-sqs)** | **Amazon SNS** (Topics + `FilterPolicy`) + **Amazon SQS** (Tampon) | Routage intelligent des e-mails transactionnels par `FilterPolicy` et rétention tampon des commandes jusqu'à 14 jours en attendant le passage du Worker Spot. |
+| **[`modules/03-serverless-lambda/`](./modules/03-serverless-lambda)** | **AWS Lambda** (`create-order`) + **IAM Least Privilege** | Prise de commande synchrone : décrémentation atomique des stocks DynamoDB, enregistrement de la commande et injection parallèle dans SNS et SQS. |
+| **[`modules/04-frontend-ec2/`](./modules/04-frontend-ec2)** | **EC2 `t3.micro`** + **ALB Multi-AZ** + **Auto Scaling** + **CloudFront** | Interface web responsive NÉOLIA, gestion des sessions, bascule automatique Multi-AZ (`eu-west-3a` / `eu-west-3b`) et distribution CDN Edge HTTPS. |
+| **[`modules/05-batch-ec2-spot/`](./modules/05-batch-ec2-spot)** | **Launch Template EC2 Spot** + **Planning Cron** + **FPDF2** | Zéro instance active au repos (`Scale-to-Zero`). Démarre périodiquement (02h00 UTC) ou à la demande via l'admin web, génère les factures PDF et s'auto-détruit (`Terminated`). |
 
 ---
 
-## 5. Analyse FinOps & Seuil de Rentabilité (Break-Even Point)
+## 4. Zoom Technique : Worker Spot Éphémère & Routage SNS
 
-> Pour l'analyse complète module par module et le comparatif avec une architecture Full Serverless, voir **[`ANALYSE_COUTS_REELS_FINOPS.md`](./ANALYSE_COUTS_REELS_FINOPS.md)**.
+### A. Le concept du *Scale-to-Zero* sur EC2 Spot
+* **Zéro euro au repos :** Le module `05-batch-ec2-spot` ne maintient aucune instance active inutilement. La capacité désirée par défaut est `desired_capacity = 0`.
+* **Déclenchement flexible :**
+  1. *Automatique (Périodique) :* Réveil programmé toutes les nuits à 02h00 UTC via règle Auto Scaling.
+  2. *À la demande (Administrateur) :* Déclenchement instantané via le bouton de l'espace administration web.
+* **Auto-destruction matérielle :** Le worker dépile les messages SQS, génère les PDF dans S3, envoie le lien transporteur, puis déclenche `shutdown -h now`. Grâce à `instance_initiated_shutdown_behavior = "terminate"`, l'instance et son volume EBS sont immédiatement supprimés.
 
-### Comparatif des coûts du Batch PDF (Région `eu-west-3` Paris)
-* **Coût de notre Worker EC2 Spot éphémère avec auto-destruction (base 2h / nuit = 60h / mois) :**
-  * Calcul Spot `t3.micro` (tarif réel relevé en `eu-west-3c`) : `60 h x 0,0040 $/h` = **0,24 $/mois**
-  * Disque EBS `gp3` (8 Go détruit après chaque batch, soit 60h/730h) : **0,06 $/mois**
-  * **Total mensuel du Worker Spot : 0,30 $/mois**
-* **Coût sur AWS Lambda (génération PDF 3s à 512 Mo de RAM = 1,5 Go-s) :**
-  * **0,000025 $ par commande** (soit **2,50 $ pour 100 000 commandes** hors quota gratuit).
-
-### Seuil de rentabilité mathématique
-* **En tarif catalogue brut (hors quota gratuit) :**
-  * `Seuil = 0,30 $ / 0,000025 $` = **12 000 commandes / mois** (~400 commandes / jour).
-* **En comptant l'offre gratuite permanente (*Always Free* : 400 000 Go-s / mois sur Lambda) :**
-  * Les **266 000 premières factures PDF / mois** (`400 000 / 1,5 Go-s`) sont couvertes à **0,00 €** sur Lambda.
-  * **Au-delà de 266 000 commandes/mois** (ou dès qu'un traitement par lot dépasse la limite stricte des **15 minutes** de Lambda) : l'EC2 Spot éphémère (`0,30 $/mois`) est imbattable financièrement et techniquement.
+### B. Ciblage transactionnel par e-mail (`FilterPolicy` SNS)
+Pour éviter qu'un client ne reçoive les commandes d'un tiers sur un Topic commun :
+* Chaque souscription client porte un filtre d'abonnement : `{"customer_email": ["client@domaine.fr"]}`.
+* Les publications Lambda et Spot attachent l'en-tête `MessageAttributes = {"customer_email": email_client}`.
+* Amazon SNS applique le filtrage côté infrastructure et n'achemine le message qu'au destinataire exact.
 
 ---
 
-## 6. Commandes de Déploiement, Synchronisation & Destruction
+## 5. Analyse FinOps & Seuil de Rentabilité
 
-### Option 1 : Relance automatique en 1 clic (Recommandé)
-Si un membre de l'équipe a modifié le code ou ajouté un module Terraform sur GitHub, exécutez simplement :
+> L'étude chiffrée complète est disponible dans **[`ANALYSE_COUTS_REELS_FINOPS.md`](./ANALYSE_COUTS_REELS_FINOPS.md)**.
 
-```powershell
-# Sur Windows (PowerShell) :
-.\reload.ps1
+* **Break-Even Point (Génération PDF) :**
+  * Hors offre gratuite : l'EC2 Spot devient plus économique qu'une Lambda dès **12 000 factures/mois**.
+  * Avec le quota gratuit (*Always Free*) : la Lambda couvre les factures jusqu'à **266 000 factures/mois**. Au-delà, ou pour s'affranchir de la limite stricte de **15 minutes** lors de batchs comptables volumineux, l'instance Spot éphémère est la solution la plus pérenne.
+* **Impact du Réseau VPC :** Une NAT Gateway standard génère ~40 $ / mois de coûts fixes incompressibles (0,05 $/h + adresses IPv4 publiques). Notre architecture maximise le Free Tier en éliminant les composants sur-dimensionnés.
 
-# Sur Linux / macOS / Git Bash :
-./reload.sh
+---
+
+## 6. 🚀 Déploiement & Évaluation en 1 Clic (Espace Enseignant)
+
+Des scripts automatisés gèrent l'intégralité du cycle de vie du projet sur n'importe quel compte AWS sans aucune configuration manuelle préalable.
+
+### A. Déploiement Automatisé
+
+#### Sur Linux / macOS :
+```bash
+chmod +x deploy_eval.sh destroy_eval.sh
+./deploy_eval.sh
 ```
-Ce script effectue automatiquement le `git pull`, charge les nouveaux modules (`terraform init -upgrade`), valide la syntaxe (`terraform validate`), applique les changements (`terraform apply -auto-approve`) et affiche l'URL publique de la boutique.
 
-### Option 2 : Commandes manuelles étape par étape
+#### Sur Windows (PowerShell) :
 ```powershell
-# 1. Récupérer les modifications Git
-git pull origin main
+.\deploy_eval.ps1
+```
 
-# 2. Initialiser et mettre à niveau les modules Terraform
-terraform init -upgrade
+**Ce que réalise le script automatiquement :**
+1. Contrôle votre session et vos droits AWS (`aws sts get-caller-identity`).
+2. Isole l'état Terraform en local (aucun bucket S3 distant requis).
+3. Déploie l'ensemble de l'architecture AWS (`terraform apply`).
+4. Crée automatiquement le compte administrateur dans Amazon Cognito :
+   * **Identifiant :** `admin@neolia.com`
+   * **Mot de passe :** `Neolia2026!Admin`
+5. Affiche l'URL publique de la boutique.
 
-# 3. Vérifier la syntaxe et déployer toute l'architecture
-terraform validate
-terraform apply -auto-approve
+---
 
-# 4. Détruire intégralement l'infrastructure après les tests (Garantie 0,00 €)
-terraform destroy -auto-approve
+### B. Scénario de Test Rapide (3 minutes chrono)
+
+| Étape | Action à réaliser | Ce qui est validé sous le capot |
+|---|---|---|
+| **1. Parcours Client** | Ouvrir l'URL de la boutique, ajouter un produit (ex: *Gel Nettoyant Minéral*) au panier et valider l'achat. | Disponibilité Front-End, intégration dynamique. |
+| **2. Traitement Serverless** | Constater l'affichage immédiat du numéro de commande et la mise à jour du stock. | Exécution **Lambda**, écriture atomique **DynamoDB**, publication **SNS** et buffer **SQS**. |
+| **3. Espace Administration** | Se connecter sur `/admin` avec `admin@neolia.com` / `Neolia2026!Admin`. Observer la commande dans la file d'attente. | Authentification **Cognito** et contrôle d'accès RBAC. |
+| **4. Batch Spot Éphémère** | Cliquer sur le bouton **« Lancer l'instance EC2 Spot »**. | Lancement d'une instance **EC2 Spot**, vidage de la file SQS, génération du PDF dans **S3**, puis **auto-destruction (Scale-to-Zero)**. |
+
+---
+
+### C. Nettoyage Complet (0 € de frais résiduels)
+
+Pour détruire 100 % des ressources créées à l'issue de l'évaluation :
+
+```bash
+# Linux / macOS :
+./destroy_eval.sh
+
+# Windows (PowerShell) :
+.\destroy_eval.ps1
 ```

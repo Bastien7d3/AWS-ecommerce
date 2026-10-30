@@ -1,4 +1,4 @@
-# ==============================================================================
+﻿# ==============================================================================
 # ORCHESTRATION GLOBALE DU PROJET CLOUDSHOP AWS (FISA 2026)
 # Fichier racine unique reliant les 6 modules dans ./modules/ :
 #   00-auth-cognito <-> 01-database-dynamodb <-> 02-messaging-sns-sqs
@@ -7,14 +7,7 @@
 
 terraform {
   required_version = ">= 1.5.0"
-  # Backend S3 partagé pour le travail en groupe (à commenter pour un test local autonome sur un autre compte AWS)
-  backend "s3" {
-    bucket         = "cloudshop-tfstate-fisa2026-unique"
-    key            = "global/s3/terraform.tfstate"
-    region         = "eu-west-3"
-    dynamodb_table = "cloudshop-tfstate-locks"
-    encrypt        = true
-  }
+  
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -42,13 +35,13 @@ provider "aws" {
 # VARIABLES GLOBALES
 # ------------------------------------------------------------------------------
 variable "aws_region" {
-  description = "Région AWS cible (Paris)"
+  description = "RÃ©gion AWS cible (Paris)"
   type        = string
   default     = "eu-west-3"
 }
 
 variable "project_name" {
-  description = "Préfixe commun des ressources du projet"
+  description = "PrÃ©fixe commun des ressources du projet"
   type        = string
   default     = "cloudshop"
 }
@@ -60,13 +53,13 @@ variable "notification_email" {
 }
 
 variable "enable_autoscaling_alb" {
-  description = "Passe à true pour déployer le Load Balancer Multi-AZ et l'Auto Scaling Group (1 à 4 EC2)"
+  description = "Passe Ã  true pour dÃ©ployer le Load Balancer Multi-AZ et l'Auto Scaling Group (1 Ã  4 EC2)"
   type        = bool
   default     = true
 }
 
 # ------------------------------------------------------------------------------
-# DONNÉES DU COMPTE & RÉSEAU PAR DÉFAUT
+# DONNÃ‰ES DU COMPTE & RÃ‰SEAU PAR DÃ‰FAUT
 # ------------------------------------------------------------------------------
 data "aws_caller_identity" "current" {}
 
@@ -99,27 +92,28 @@ data "aws_ami" "al2023" {
 module "auth_cognito" {
   source       = "./modules/00-auth-cognito"
   project_name = var.project_name
+  account_id   = data.aws_caller_identity.current.account_id
 }
 
 # ------------------------------------------------------------------------------
 # APPEL DES 5 MODULES DU PROJET
 # ------------------------------------------------------------------------------
 
-# 1. Base de données DynamoDB (Catalogue & Commandes) + Bucket S3 (Factures PDF)
+# 1. Base de donnÃ©es DynamoDB (Catalogue & Commandes) + Bucket S3 (Factures PDF)
 module "database_dynamodb" {
   source       = "./modules/01-database-dynamodb"
   project_name = var.project_name
   account_id   = data.aws_caller_identity.current.account_id
 }
 
-# 2. Messaging Événementiel (Topics SNS & File d'attente SQS)
+# 2. Messaging Ã‰vÃ©nementiel (Topics SNS & File d'attente SQS)
 module "messaging_sns_sqs" {
   source             = "./modules/02-messaging-sns-sqs"
   project_name       = var.project_name
   notification_email = var.notification_email
 }
 
-# 3. Cœur Serverless (Fonction AWS Lambda de prise de commande)
+# 3. CÅ“ur Serverless (Fonction AWS Lambda de prise de commande)
 module "serverless_lambda" {
   source                       = "./modules/03-serverless-lambda"
   project_name                 = var.project_name
@@ -163,7 +157,7 @@ module "frontend_ec2" {
   user_pool_client_id = module.auth_cognito.user_pool_client_id
 }
 
-# 5. Worker Batch EC2 Spot (Périodique + lancement à la demande + auto-destruction)
+# 5. Worker Batch EC2 Spot (PÃ©riodique + lancement Ã  la demande + auto-destruction)
 module "batch_ec2_spot" {
   source                          = "./modules/05-batch-ec2-spot"
   project_name                    = var.project_name
@@ -195,12 +189,12 @@ output "front_instance_id" {
 }
 
 output "spot_launch_template_id" {
-  description = "Identifiant du Launch Template EC2 Spot (Périodique & Lancement à la demande)"
+  description = "Identifiant du Launch Template EC2 Spot (PÃ©riodique & Lancement Ã  la demande)"
   value       = module.batch_ec2_spot.spot_launch_template_id
 }
 
 output "dynamodb_tables" {
-  description = "Tables DynamoDB créées"
+  description = "Tables DynamoDB crÃ©Ã©es"
   value = {
     products = module.database_dynamodb.products_table_name
     orders   = module.database_dynamodb.orders_table_name
@@ -208,7 +202,7 @@ output "dynamodb_tables" {
 }
 
 output "s3_invoices_bucket" {
-  description = "Bucket S3 stockant les factures PDF générées"
+  description = "Bucket S3 stockant les factures PDF gÃ©nÃ©rÃ©es"
   value       = module.database_dynamodb.invoices_bucket_name
 }
 

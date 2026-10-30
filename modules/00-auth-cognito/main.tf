@@ -40,10 +40,10 @@ resource "aws_cognito_user_group" "admin" {
 }
 
 # ------------------------------------------------------------------------------
-# DOMAINE COGNITO
+# DOMAINE COGNITO (Unicité garantie par compte pour éviter tout conflit inter-comptes)
 # ------------------------------------------------------------------------------
 resource "aws_cognito_user_pool_domain" "main" {
-  domain       = "${var.project_name}-auth-fisa2026"
+  domain       = var.account_id != "" ? "${var.project_name}-auth-${var.account_id}" : "${var.project_name}-auth-fisa2026"
   user_pool_id = aws_cognito_user_pool.pool.id
 }
 
