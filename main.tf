@@ -7,7 +7,7 @@
 
 terraform {
   required_version = ">= 1.5.0"
-  
+
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -217,4 +217,9 @@ output "sns_topics" {
 output "sqs_batch_queue_url" {
   description = "File d'attente SQS alimentant le Worker EC2 Spot"
   value       = module.messaging_sns_sqs.orders_batch_queue_url
+}
+
+output "user_pool_id" {
+  description = "Identifiant du User Pool Cognito"
+  value       = module.auth_cognito.user_pool_id
 }

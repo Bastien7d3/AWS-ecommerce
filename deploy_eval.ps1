@@ -102,6 +102,9 @@ if ($LASTEXITCODE -ne 0) {
 # 6. Configuration de l'administrateur Cognito
 Write-Host "`n[6/6] Configuration du compte Administrateur NÉOLIA..." -ForegroundColor Yellow
 $userPoolId = terraform output -raw user_pool_id 2>$null
+if (-not $userPoolId -or $userPoolId -eq "") {
+    $userPoolId = (aws cognito-idp list-user-pools --max-results 10 --query "UserPools[?Name=='cloudshop-user-pool'].Id" --output text 2>$null)
+}
 $adminEmail = "admin@neolia.com"
 $adminPassword = "Neolia2026!Admin"
 

@@ -81,10 +81,15 @@ terraform apply -auto-approve $NOTIFICATION_ARG
 echo -e "\n${YELLOW}[6/6] Configuration du compte Administrateur NÉOLIA...${NC}"
 USER_POOL_ID=$(terraform output -raw user_pool_id 2>/dev/null || echo "")
 
+if [ -z "$USER_POOL_ID" ]; then
+    # Solution de secours si l'output Terraform est absent : recherche par nom de tag/ressource
+    USER_POOL_ID=$(aws cognito-idp list-user-pools --max-results 10 --query "UserPools[?Name=='cloudshop-user-pool'].Id" --output text 2>/dev/null || echo "")
+fi
+
 ADMIN_EMAIL="admin@neolia.com"
 ADMIN_PASSWORD="Neolia2026!Admin"
 
-if [ -n "$USER_POOL_ID" ]; then
+if [ -n "$USER_POOL_ID" ] && [ "$USER_POOL_ID" != "None" ]; then
     echo -e "Création du compte administrateur dans Amazon Cognito ($ADMIN_EMAIL)..."
 
     # Création du compte si inexistant
@@ -108,7 +113,7 @@ if [ -n "$USER_POOL_ID" ]; then
       --username "$ADMIN_EMAIL" \
       --group-name "admin" 2>/dev/null || true
 
-    echo -e "  ✔ Compte Administrateur Cognito configuré et prêt."
+    echo -e "  Compte Administrateur Cognito configuré et prêt."
 else
     echo -e "${YELLOW}  Attention : Impossible de récupérer le User Pool ID Cognito.${NC}"
 fi
