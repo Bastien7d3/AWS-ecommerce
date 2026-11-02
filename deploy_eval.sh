@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # SCRIPT DE DÉPLOIEMENT AUTOMATISÉ POUR ÉVALUATION (Linux / macOS)
-# Projet : NÉOLIA CloudShop - IMT FISA 2026
+# Projet : NÉOLIA CloudShop - IMT FISA 2027
 # Binôme / Équipe : Bastien BRUNEL, William PEREIRA, Lucas DEBRUYNE
 # ==============================================================================
 set -e
@@ -13,7 +13,7 @@ RED='\033[0;31m'
 NC='\033[0m'
 
 echo -e "${CYAN}================================================================${NC}"
-echo -e "${CYAN}   NÉOLIA CloudShop - Déploiement Évaluation AWS (FISA 2026)     ${NC}"
+echo -e "${CYAN}   NÉOLIA CloudShop - Déploiement Évaluation AWS (FISA 2027)     ${NC}"
 echo -e "${CYAN}   Auteurs : Bastien BRUNEL, William PEREIRA, Lucas DEBRUYNE    ${NC}"
 echo -e "${CYAN}================================================================${NC}"
 
@@ -86,7 +86,7 @@ ADMIN_PASSWORD="Neolia2026!Admin"
 
 if [ -n "$USER_POOL_ID" ]; then
     echo -e "Création du compte administrateur dans Amazon Cognito ($ADMIN_EMAIL)..."
-    
+
     # Création du compte si inexistant
     aws cognito-idp admin-create-user \
       --user-pool-id "$USER_POOL_ID" \
@@ -121,7 +121,7 @@ echo -e "\n${GREEN}=============================================================
 echo -e "${GREEN}       DÉPLOIEMENT RÉUSSI ! L'ARCHITECTURE EST EN LIGNE         ${NC}"
 echo -e "${GREEN}================================================================${NC}"
 
-echo -e "\n${CYAN}📍 ACCÈS À LA BOUTIQUE :${NC}"
+echo -e "\n${CYAN}ACCÈS À LA BOUTIQUE :${NC}"
 if [ -n "$WEBSITE_URL" ]; then
     echo -e "  URL Public CloudFront (HTTPS) : ${GREEN}$WEBSITE_URL${NC}"
 fi
@@ -129,16 +129,10 @@ if [ -n "$ALB_DNS" ]; then
     echo -e "  URL Direct ALB (HTTP)          : http://$ALB_DNS"
 fi
 
-echo -e "\n${CYAN}👤 IDENTIFIANTS ADMINISTRATEUR NÉOLIA :${NC}"
+echo -e "\n${CYAN}IDENTIFIANTS ADMINISTRATEUR NÉOLIA :${NC}"
 echo -e "  URL d'administration : ${GREEN}$WEBSITE_URL/admin${NC}"
 echo -e "  E-mail               : ${GREEN}$ADMIN_EMAIL${NC}"
 echo -e "  Mot de passe         : ${GREEN}$ADMIN_PASSWORD${NC}"
 
-echo -e "\n${CYAN}📋 SCÉNARIO RAPIDE D'ÉVALUATION EN 4 ÉTAPES (3 min) :${NC}"
-echo -e "  1. ${YELLOW}Navigation & Commande :${NC} Ouvrez la boutique, ajoutez un cosmétique (ex: Gel Nettoyant) et validez la commande."
-echo -e "  2. ${YELLOW}Serverless & Stock :${NC} La Lambda décrémente instantanément le stock dans DynamoDB et publie dans SQS + SNS."
-echo -e "  3. ${YELLOW}Espace Admin & Worker Spot :${NC} Allez sur /admin, observez la commande en attente dans la file SQS, puis cliquez sur 'Lancer le Worker EC2 Spot'."
-echo -e "  4. ${YELLOW}Facture & Clôture :${NC} Le worker Spot démarre, compile la facture PDF dans Amazon S3, et s'auto-détruit (Scale-to-Zero)."
-
-echo -e "\n${YELLOW}🧹 POUR TOUT NETTOYER APRÈS L'ÉVALUATION (0€ de frais résiduels) :${NC}"
+echo -e "\n${YELLOW}POUR TOUT NETTOYER APRÈS L'ÉVALUATION (0€ de frais résiduels) :${NC}"
 echo -e "  Exécutez simplement : ${CYAN}./destroy_eval.sh${NC}\n"

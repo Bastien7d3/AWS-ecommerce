@@ -2,9 +2,9 @@
 .SYNOPSIS
     Script de déploiement automatisé pour évaluation (Windows PowerShell).
 .DESCRIPTION
-    Projet : NÉOLIA CloudShop - IMT FISA 2026
+    Projet : NÉOLIA CloudShop - IMT FISA 2027
     Auteurs : Bastien BRUNEL, William PEREIRA, Lucas DEBRUYNE
-    
+
     1. Vérifie les prérequis (Terraform, AWS CLI, Session AWS).
     2. Isole le stockage Terraform en local pour éviter tout conflit de droits.
     3. Déploie l'architecture complète (terraform apply).
@@ -16,7 +16,7 @@
 $ErrorActionPreference = "Stop"
 
 Write-Host "================================================================" -ForegroundColor Cyan
-Write-Host "   NÉOLIA CloudShop - Déploiement Évaluation AWS (FISA 2026)     " -ForegroundColor Cyan
+Write-Host "   NÉOLIA CloudShop - Déploiement Évaluation AWS (FISA 2027)     " -ForegroundColor Cyan
 Write-Host "   Auteurs : Bastien BRUNEL, William PEREIRA, Lucas DEBRUYNE    " -ForegroundColor Cyan
 Write-Host "================================================================" -ForegroundColor Cyan
 
@@ -107,7 +107,7 @@ $adminPassword = "Neolia2026!Admin"
 
 if ($userPoolId) {
     Write-Host "Création du compte administrateur dans Amazon Cognito ($adminEmail)..."
-    
+
     # Création du compte si inexistant
     aws cognito-idp admin-create-user `
       --user-pool-id "$userPoolId" `
@@ -142,7 +142,7 @@ Write-Host "`n================================================================" 
 Write-Host "       DÉPLOIEMENT RÉUSSI ! L'ARCHITECTURE EST EN LIGNE         " -ForegroundColor Green
 Write-Host "================================================================" -ForegroundColor Green
 
-Write-Host "`n📍 ACCÈS À LA BOUTIQUE :" -ForegroundColor Cyan
+Write-Host "`nACCÈS À LA BOUTIQUE :" -ForegroundColor Cyan
 if ($websiteUrl) {
     Write-Host "  URL Public CloudFront (HTTPS) : " -NoNewline
     Write-Host $websiteUrl -ForegroundColor Green
@@ -151,16 +151,16 @@ if ($albDns) {
     Write-Host "  URL Direct ALB (HTTP)          : http://$albDns" -ForegroundColor Gray
 }
 
-Write-Host "`n👤 IDENTIFIANTS ADMINISTRATEUR NÉOLIA :" -ForegroundColor Cyan
+Write-Host "`nIDENTIFIANTS ADMINISTRATEUR NÉOLIA :" -ForegroundColor Cyan
 Write-Host "  URL d'administration : $websiteUrl/admin" -ForegroundColor Green
 Write-Host "  E-mail               : $adminEmail" -ForegroundColor Green
 Write-Host "  Mot de passe         : $adminPassword" -ForegroundColor Yellow
 
-Write-Host "`n📋 SCÉNARIO RAPIDE D'ÉVALUATION EN 4 ÉTAPES (3 min) :" -ForegroundColor Cyan
+Write-Host "`nSCÉNARIO RAPIDE D'ÉVALUATION EN 4 ÉTAPES (3 min) :" -ForegroundColor Cyan
 Write-Host "  1. Navigation & Commande : Ouvrez la boutique, ajoutez un cosmétique (ex: Gel Nettoyant) et validez la commande."
 Write-Host "  2. Serverless & Stock   : La Lambda décrémente instantanément le stock dans DynamoDB et publie dans SQS + SNS."
 Write-Host "  3. Espace Admin & Spot  : Allez sur /admin, observez la commande en attente dans la file SQS, puis cliquez sur 'Lancer le Worker EC2 Spot'."
 Write-Host "  4. Facture & Clôture    : Le worker Spot démarre, compile la facture PDF dans Amazon S3, et s'auto-détruit (Scale-to-Zero)."
 
-Write-Host "`n🧹 POUR TOUT NETTOYER APRÈS L'ÉVALUATION (0€ de frais résiduels) :" -ForegroundColor Yellow
+Write-Host "`nPOUR TOUT NETTOYER APRÈS L'ÉVALUATION (0€ de frais résiduels) :" -ForegroundColor Yellow
 Write-Host "  Exécutez simplement : .\destroy_eval.ps1`n" -ForegroundColor Cyan

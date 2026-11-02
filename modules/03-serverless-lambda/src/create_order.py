@@ -106,7 +106,7 @@ def list_products(event_data):
         "status": "SUCCESS",
         "count": len(items),
         "products": items,
-        "items": items,  # Rétrocompatibilité avec les scripts front existants
+        "items": items,
     }
 
 
@@ -842,7 +842,7 @@ def create_order(event_data):
         if "bastien" in customer_email.lower():
             shipping_address = "2 Rue de Lille, 75007 Paris"
         else:
-            shipping_address = "12 Rue de la Paix, 75002 Paris" 
+            shipping_address = "12 Rue de la Paix, 75002 Paris"
 
     # Récupération de la liste des articles
     items_raw = event_data.get("items")

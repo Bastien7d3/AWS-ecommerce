@@ -1,6 +1,6 @@
 
 # ==============================================================================
-# MODULE 01 : DYNAMODB (CATALOGUE ATELIER NOIR & COMMANDES) + BUCKET S3 (PDF)
+# MODULE 01 : DYNAMODB (CATALOGUE & COMMANDES) + BUCKET S3 (PDF)
 # ==============================================================================
 
 # 1. Table du catalogue produits

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # SCRIPT DE SUPPRESSION PROPRE POUR ÉVALUATION (Linux / macOS)
-# Projet : NÉOLIA CloudShop - IMT FISA 2026
+# Projet : NÉOLIA CloudShop - IMT FISA 2027
 # ==============================================================================
 set -e
 
