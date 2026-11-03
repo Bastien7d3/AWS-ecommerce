@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Script de nettoyage complet pour évaluation (Windows PowerShell).
 .DESCRIPTION

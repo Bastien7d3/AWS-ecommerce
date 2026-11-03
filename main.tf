@@ -1,4 +1,4 @@
-﻿# ==============================================================================
+# ==============================================================================
 # ORCHESTRATION GLOBALE DU PROJET CLOUDSHOP AWS (FISA 2026)
 # Fichier racine unique reliant les 6 modules dans ./modules/ :
 #   00-auth-cognito <-> 01-database-dynamodb <-> 02-messaging-sns-sqs
@@ -153,8 +153,8 @@ module "frontend_ec2" {
   spot_launch_template_id         = module.batch_ec2_spot.spot_launch_template_id
   spot_worker_role_arn            = module.batch_ec2_spot.spot_worker_role_arn
   enable_autoscaling_alb          = var.enable_autoscaling_alb
-  user_pool_id        = module.auth_cognito.user_pool_id
-  user_pool_client_id = module.auth_cognito.user_pool_client_id
+  user_pool_id                    = module.auth_cognito.user_pool_id
+  user_pool_client_id             = module.auth_cognito.user_pool_client_id
 }
 
 # 5. Worker Batch EC2 Spot (PÃ©riodique + lancement Ã  la demande + auto-destruction)
@@ -222,4 +222,8 @@ output "sqs_batch_queue_url" {
 output "user_pool_id" {
   description = "Identifiant du User Pool Cognito"
   value       = module.auth_cognito.user_pool_id
+}
+output "alb_dns_name" {
+  description = "Nom DNS brut de l'ALB"
+  value       = module.frontend_ec2.alb_dns_name
 }

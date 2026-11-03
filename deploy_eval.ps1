@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Script de déploiement automatisé pour évaluation (Windows PowerShell).
 .DESCRIPTION
@@ -101,7 +101,7 @@ if ($LASTEXITCODE -ne 0) {
 
 # 6. Configuration de l'administrateur Cognito
 Write-Host "`n[6/6] Configuration du compte Administrateur NÉOLIA..." -ForegroundColor Yellow
-$userPoolId = terraform output -raw user_pool_id 2>$null
+$userPoolId = try { terraform output -raw user_pool_id 2>$null } catch { $null }
 if (-not $userPoolId -or $userPoolId -eq "") {
     $userPoolId = (aws cognito-idp list-user-pools --max-results 10 --query "UserPools[?Name=='cloudshop-user-pool'].Id" --output text 2>$null)
 }
@@ -138,8 +138,8 @@ if ($userPoolId) {
 }
 
 # Récupération des URLs
-$websiteUrl = terraform output -raw website_url 2>$null
-$albDns = terraform output -raw alb_dns_name 2>$null
+$websiteUrl = try { terraform output -raw website_url 2>$null } catch { $null }
+$albDns = try { terraform output -raw alb_dns_name 2>$null } catch { $null }
 
 Write-Host "`n================================================================" -ForegroundColor Green
 Write-Host "       DÉPLOIEMENT RÉUSSI ! L'ARCHITECTURE EST EN LIGNE         " -ForegroundColor Green
